@@ -747,7 +747,7 @@
             <span id="header-compact-user">👤 Войти</span>
             <span id="header-compact-sync" title="Статус общей базы">🔴</span>
           </span>
-          <button onclick="announcePaintPoured()" id="paint-poured-btn" class="hidden text-white text-[9px] font-black uppercase leading-none px-2 py-1.5 bg-green-600 rounded-lg shrink-0" title="Сообщить печатнику и начальнику смены, что краска налита">🎨 Налил</button>
+          <button onclick="openPaintLineModal()" id="paint-poured-btn" class="hidden text-white text-[9px] font-black uppercase leading-none px-2 py-1.5 bg-green-600 rounded-lg shrink-0" title="Сообщить печатнику и начальнику смены, что краска налита">🎨 Налил</button>
           <button onclick="openChatModal()" class="relative text-white/90 text-sm leading-none px-2 py-1.5 bg-blue-800/50 rounded-lg shrink-0" title="Чат с коллегой">
             💬
             <span id="chat-unread-badge-mini" class="hidden absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[8px] font-black rounded-full w-4 h-4 flex items-center justify-center leading-none">1</span>
@@ -2126,6 +2126,16 @@
             <button type="button" onclick="setLoginRole('upp_master')" id="login-role-upp_master" class="py-3 rounded-xl font-black uppercase text-xs border-2 border-slate-600 bg-white/5">Мастер УПП</button>
           </div>
         </div>
+        <div id="login-line-wrap" class="hidden">
+          <label class="text-[9px] font-bold uppercase text-gray-400 block mb-1">Линия, на которой вы работаете</label>
+          <div class="grid grid-cols-4 gap-2">
+            <button type="button" onclick="setLoginLine(1)" id="login-line-1" class="py-3 rounded-xl font-black text-sm border-2 border-slate-600 bg-white/5">1</button>
+            <button type="button" onclick="setLoginLine(2)" id="login-line-2" class="py-3 rounded-xl font-black text-sm border-2 border-slate-600 bg-white/5">2</button>
+            <button type="button" onclick="setLoginLine(3)" id="login-line-3" class="py-3 rounded-xl font-black text-sm border-2 border-slate-600 bg-white/5">3</button>
+            <button type="button" onclick="setLoginLine(4)" id="login-line-4" class="py-3 rounded-xl font-black text-sm border-2 border-slate-600 bg-white/5">4</button>
+          </div>
+          <p class="text-[9px] text-gray-500 mt-1 leading-relaxed">Оповещение «Краска налита» придёт только на выбранную линию.</p>
+        </div>
         <button onclick="saveLoginProfile()" class="w-full py-3 bg-emerald-600 rounded-2xl font-black uppercase text-xs">✅ Войти</button>
         <button onclick="logoutProfile()" id="logout-profile-btn" class="hidden w-full py-2 text-red-300 font-bold text-xs">Выйти из кабинета</button>
         <button onclick="closeLoginModal()" class="w-full py-2 text-gray-400 font-bold text-xs">Отмена</button>
@@ -2136,8 +2146,22 @@
 <!-- Чат: сообщения хранятся в той же общей базе (☁️), что и рецепты —
      поэтому виден коллеге почти сразу (обновляется каждые ~6 сек, пока
      окно чата открыто, и раз в 30 сек фоном для счётчика непрочитанных). -->
+<div id="paint-line-modal" class="hidden fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-6" onclick="if(event.target===this) closePaintLineModal()">
+  <div class="bg-white p-6 rounded-[2rem] space-y-3 max-w-sm w-full" onclick="event.stopPropagation()">
+    <h3 class="font-black uppercase text-gray-800 text-center leading-tight">🎨 Краска налита<br><span class="font-normal normal-case text-xs text-gray-400">на какой линии?</span></h3>
+    <p class="text-[10px] text-gray-400 text-center leading-relaxed">Оповещение получит печатник именно этой линии и начальник смены.</p>
+    <div class="grid grid-cols-2 gap-3">
+      <button onclick="confirmPaintLine(1)" class="py-6 rounded-2xl font-black text-3xl bg-green-600 text-white active:bg-green-700">1</button>
+      <button onclick="confirmPaintLine(2)" class="py-6 rounded-2xl font-black text-3xl bg-green-600 text-white active:bg-green-700">2</button>
+      <button onclick="confirmPaintLine(3)" class="py-6 rounded-2xl font-black text-3xl bg-green-600 text-white active:bg-green-700">3</button>
+      <button onclick="confirmPaintLine(4)" class="py-6 rounded-2xl font-black text-3xl bg-green-600 text-white active:bg-green-700">4</button>
+    </div>
+    <button onclick="closePaintLineModal()" class="w-full py-2 text-gray-400 font-bold text-xs">Отмена</button>
+  </div>
+</div>
 <div id="paint-poured-alert" class="hidden fixed inset-0 z-[999] bg-green-600 flex flex-col items-center justify-center text-center p-6" onclick="hidePaintAlert()">
   <div class="text-7xl mb-4">🎨</div>
+  <div id="paint-poured-alert-line" class="text-2xl font-black uppercase text-white/90 leading-tight mb-1"></div>
   <div class="text-3xl font-black uppercase text-white leading-tight mb-1">Краска налита</div>
   <div class="text-3xl font-black uppercase text-white leading-tight mb-5">можно забирать</div>
   <div id="paint-poured-alert-meta" class="text-sm text-white/90 font-bold"></div>
@@ -2555,7 +2579,7 @@ let chatLastNotifiedTs = 0;
 // завести ДРУГУЮ общую базу — подключитесь через ⚙️/☁️ с новым URL, он
 // сохранится в localStorage и получит приоритет перед значением по умолчанию.
 const SHEETDB_DEFAULT_CONFIG = {
-  url: 'ВСТАВЬТЕ_СЮДА_URL_ВЕБ-ПРИЛОЖЕНИЯ_APPS_SCRIPT'
+  url: 'https://script.google.com/macros/s/AKfycbxFmekUSpUrOM5a-ldeg39IUy2r5GnYB-fxv9uZUnLF08_3HHnHiSayOsThfv6c5g/exec'
 };
 
 function loadSheetDbConfig() {
@@ -2763,6 +2787,7 @@ const USER_PROFILE_KEY = 'colorist_user_profile';
 const PRESENCE_STALE_MS = 3 * 60 * 1000; // после 3 минут без "пинга" считаем человека offline
 let currentUserProfile = null;
 let pendingLoginRole = 'colorist';
+let pendingLoginLine = null;
 let presenceHeartbeatTimer = null;
 let currentOnlinePresence = [];
 
@@ -2826,8 +2851,10 @@ function openLoginModal() {
   if (!el) return;
   currentUserProfile = currentUserProfile || loadUserProfile();
   pendingLoginRole = (currentUserProfile && currentUserProfile.role) || 'colorist';
+  pendingLoginLine = (currentUserProfile && currentUserProfile.line) || null;
   document.getElementById('login-name-input').value = currentUserProfile ? currentUserProfile.name : '';
   setLoginRole(pendingLoginRole);
+  setLoginLine(pendingLoginLine);
   document.getElementById('logout-profile-btn').classList.toggle('hidden', !currentUserProfile);
   el.classList.remove('hidden');
   setTimeout(() => { const inp = document.getElementById('login-name-input'); if (inp) inp.focus(); }, 50);
@@ -2850,11 +2877,23 @@ function setLoginRole(role) {
     const btn = document.getElementById(id);
     if (btn) btn.className = (span ? span + ' ' : '') + 'py-3 rounded-xl font-black uppercase text-xs border-2 ' + (role === key ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-600 bg-white/5');
   });
+  // Линию выбирает только печатник — остальным ролям она не нужна (начальник
+  // смены и колорист видят/шлют оповещения без привязки к конкретной линии).
+  const lineWrap = document.getElementById('login-line-wrap');
+  if (lineWrap) lineWrap.classList.toggle('hidden', role !== 'senior_printer');
+}
+function setLoginLine(line) {
+  pendingLoginLine = line || null;
+  [1, 2, 3, 4].forEach(n => {
+    const btn = document.getElementById('login-line-' + n);
+    if (btn) btn.className = 'py-3 rounded-xl font-black text-sm border-2 ' + (Number(pendingLoginLine) === n ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-600 bg-white/5');
+  });
 }
 function saveLoginProfile() {
   const name = (document.getElementById('login-name-input').value || '').trim();
   if (!name) { toast('Введите имя, чтобы войти в личный кабинет.'); return; }
-  currentUserProfile = { name, role: pendingLoginRole };
+  if (pendingLoginRole === 'senior_printer' && !pendingLoginLine) { toast('Выберите линию, на которой вы работаете.'); return; }
+  currentUserProfile = { name, role: pendingLoginRole, line: pendingLoginRole === 'senior_printer' ? pendingLoginLine : null };
   saveUserProfileToStorage(currentUserProfile);
   renderUserBadge();
   closeLoginModal();
@@ -2884,7 +2923,8 @@ function renderUserBadge() {
   if (compact) compact.textContent = currentUserProfile ? ('👤 ' + currentUserProfile.name) : '👤 Войти';
   if (!badge) return;
   if (currentUserProfile) {
-    badge.innerHTML = '👤 ' + escapeHtmlProd(currentUserProfile.name) + ' <span class="opacity-70">· ' + roleLabel(currentUserProfile.role) + '</span>';
+    const lineSuffix = (currentUserProfile.role === 'senior_printer' && currentUserProfile.line) ? (' (линия ' + currentUserProfile.line + ')') : '';
+    badge.innerHTML = '👤 ' + escapeHtmlProd(currentUserProfile.name) + ' <span class="opacity-70">· ' + roleLabel(currentUserProfile.role) + lineSuffix + '</span>';
     const masterEl = document.getElementById('master-name');
     if (masterEl && !masterEl.value) masterEl.value = currentUserProfile.name;
   } else {
@@ -2915,7 +2955,7 @@ async function sendPresenceHeartbeat() {
     const now = Date.now();
     let presence = remote.presence || [];
     presence = presence.filter(p => p && p.name && (now - (p.ts || 0)) < PRESENCE_STALE_MS && p.name !== currentUserProfile.name);
-    presence.push({ name: currentUserProfile.name, role: currentUserProfile.role, ts: now });
+    presence.push({ name: currentUserProfile.name, role: currentUserProfile.role, line: currentUserProfile.line || null, ts: now });
     remote.presence = presence;
     const ok = await pushCloudSnapshot(remote);
     if (ok) {
@@ -2950,7 +2990,7 @@ function renderOnlineUsers(presence) {
   bar.innerHTML = '<span class="text-[8px] text-blue-200 opacity-70 mr-1">Онлайн:</span>' + online.map(p => {
     return '<span class="inline-flex items-center gap-1 bg-slate-800/70 rounded-full px-2 py-0.5 text-[8px] font-bold">' +
       '<span class="w-1.5 h-1.5 rounded-full ' + roleDotClass(p.role) + '"></span>' +
-      escapeHtmlProd(p.name) + ' <span class="opacity-60">(' + roleShortLabel(p.role) + ')</span></span>';
+      escapeHtmlProd(p.name) + ' <span class="opacity-60">(' + roleShortLabel(p.role) + (p.role === 'senior_printer' && p.line ? ', линия ' + p.line : '') + ')</span></span>';
   }).join('');
 }
 
@@ -3381,22 +3421,42 @@ function saveShownPaintAlertTs(ts) {
   try { localStorage.setItem(PAINT_ALERT_LAST_SHOWN_KEY, String(ts)); } catch (e) {}
 }
 
-// Нажатие кнопки колористом — отправляет отметку в общую базу. ВАЖНО (как и
-// везде здесь): сначала подтягиваем актуальную запись целиком и сохраняем
-// её поля (рецепты/presence/чат), иначе затрём чужие данные.
-async function announcePaintPoured() {
+// Нажатие кнопки колористом сначала спрашивает номер линии (1-4) — печатник
+// каждой линии видит в личном кабинете только свою линию (см. saveLoginProfile
+// и applyIncomingPaintAlert), поэтому без номера линии оповещение некому
+// адресовать. Сама отправка идёт в announcePaintPoured(line).
+function openPaintLineModal() {
+  if (!currentUserProfile) { openLoginModal(); toast('Сначала войдите под именем — иначе печатник и начальник смены не увидят, кто налил краску.'); return; }
+  const cfg = sheetDbConfig || loadSheetDbConfig();
+  if (!cfg || !cfg.url) { toast('Подключите общую базу (☁️ в шапке) — иначе печатник и начальник смены не увидят уведомление.'); return; }
+  const el = document.getElementById('paint-line-modal');
+  if (el) el.classList.remove('hidden');
+}
+function closePaintLineModal() {
+  const el = document.getElementById('paint-line-modal');
+  if (el) el.classList.add('hidden');
+}
+function confirmPaintLine(line) {
+  closePaintLineModal();
+  announcePaintPoured(line);
+}
+
+// Отправляет отметку в общую базу. ВАЖНО (как и везде здесь): сначала
+// подтягиваем актуальную запись целиком и сохраняем её поля (рецепты/presence/
+// чат), иначе затрём чужие данные.
+async function announcePaintPoured(line) {
   if (!currentUserProfile) { openLoginModal(); toast('Сначала войдите под именем — иначе печатник и начальник смены не увидят, кто налил краску.'); return; }
   const cfg = sheetDbConfig || loadSheetDbConfig();
   if (!cfg || !cfg.url) { toast('Подключите общую базу (☁️ в шапке) — иначе печатник и начальник смены не увидят уведомление.'); return; }
   const btn = document.getElementById('paint-poured-btn');
   if (btn) btn.disabled = true;
-  const alertObj = { ts: Date.now(), name: currentUserProfile.name };
+  const alertObj = { ts: Date.now(), name: currentUserProfile.name, line: line || null };
   try {
     const remote = await fetchCloudSnapshot();
     if (!remote) throw new Error('Нет ответа от таблицы');
     remote.paintAlert = alertObj;
     await pushCloudSnapshot(remote);
-    toast('✅ Отправлено — печатник и начальник смены увидят «Краска налита» на весь экран');
+    toast('✅ Отправлено — линия ' + line + ': печатник этой линии и начальник смены увидят «Краска налита» на весь экран');
   } catch (e) {
     console.error(e);
     toast('Не удалось отправить уведомление — проверьте интернет и подключение общей базы (☁️).');
@@ -3427,6 +3487,14 @@ function applyIncomingPaintAlert(alert) {
   if (role !== 'shift_lead' && role !== 'senior_printer') return;
   if (!alert || !alert.ts) return;
   if (alert.ts <= shownPaintAlertTs) return; // это уведомление уже показывали на этом устройстве
+  // Печатник видит только оповещения со своей линии (выбранной при входе в
+  // личный кабинет) — начальник смены отвечает за все линии сразу, поэтому
+  // получает оповещение при любой линии.
+  if (role === 'senior_printer' && currentUserProfile.line && alert.line && String(alert.line) !== String(currentUserProfile.line)) {
+    shownPaintAlertTs = alert.ts;
+    saveShownPaintAlertTs(shownPaintAlertTs);
+    return;
+  }
   const elapsed = Date.now() - alert.ts;
   shownPaintAlertTs = alert.ts;
   saveShownPaintAlertTs(shownPaintAlertTs);
@@ -3436,12 +3504,14 @@ function applyIncomingPaintAlert(alert) {
 function showPaintAlert(alert, remainingMs) {
   const panel = document.getElementById('paint-poured-alert');
   if (!panel) return;
+  const lineEl = document.getElementById('paint-poured-alert-line');
+  if (lineEl) lineEl.textContent = alert.line ? ('Линия ' + alert.line) : '';
   const meta = document.getElementById('paint-poured-alert-meta');
   if (meta) meta.textContent = (alert.name ? 'Налил: ' + alert.name + ' · ' : '') + new Date(alert.ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
   panel.classList.remove('hidden');
   playPaintAlertSound();
-  speak('Краска налита, можно забирать' + (alert.name ? ', колорист ' + alert.name : ''));
-  firePushNotification('🎨 Краска налита', 'Можно забирать' + (alert.name ? ' — ' + alert.name : ''));
+  speak('Краска налита' + (alert.line ? ', линия ' + alert.line : '') + ', можно забирать' + (alert.name ? ', колорист ' + alert.name : ''));
+  firePushNotification('🎨 Краска налита' + (alert.line ? ' — линия ' + alert.line : ''), 'Можно забирать' + (alert.name ? ' — ' + alert.name : ''));
   if (paintAlertHideTimer) clearTimeout(paintAlertHideTimer);
   paintAlertHideTimer = setTimeout(hidePaintAlert, Math.max(0, remainingMs));
 }
