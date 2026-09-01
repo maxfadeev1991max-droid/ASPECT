@@ -895,18 +895,6 @@
   </div>
 
   <div id="view-colorist" class="p-4 space-y-6 relative">
-    <!-- ===== Блокировка вкладки «Колорист» на время внесения данных =====
-         Пока колорист/начальник смены/мастер УПП вносят эталон+замес+рецепт
-         по конкретной линии, старший печатник этой линии видит вкладку
-         только для чтения (оверлей ниже). Лок общий (в облаке), отдельный
-         на каждую линию (1-4). Снять лок может кто угодно, кроме печатника —
-         это подстраховка, если колорист забыл завершить внесение. -->
-    <div id="colorist-lock-panel" class="hidden bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
-      <h3 class="text-sm font-black text-gray-800 uppercase">🔒 Внесение данных по линиям</h3>
-      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Начните внесение по своей линии — печатник этой линии не сможет менять данные, пока не завершите. Снять чужую блокировку можно кнопкой «Освободить» (например, если коллега забыл завершить).</p>
-      <div id="colorist-lock-lines" class="space-y-1.5"></div>
-    </div>
-
     <!-- ===== Заявки «Нужна краска»: печатник → колорист =====
          Отдельная лёгкая очередь поверх общей базы (поле paintRequests),
          не путать с paintAlert ("налил, забирай") — здесь наоборот, печатник
@@ -915,7 +903,9 @@
          заявку и шлёт печатнику этой линии тот самый полноэкранный алерт.
          Начальнику смены отдельно сигналим, если заявка висит без движения
          дольше настроенного порога простоя (по умолчанию 15 минут, меняется
-         кнопкой "⏳ Порог простоя" над очередью). -->
+         кнопкой "⏳ Порог простоя" над очередью).
+         Блок стоит ПЕРВЫМ в вкладке — это то, с чем колорист/печатник
+         работает постоянно; панель блокировки линий (ниже) нужна редко. -->
     <div id="paint-requests-wrap" class="hidden bg-white border border-gray-100 rounded-2xl p-4 space-y-3">
       <div id="paint-request-form" class="hidden space-y-2">
         <h3 class="text-sm font-black text-gray-800 uppercase">🧴 Нужна краска</h3>
@@ -926,8 +916,10 @@
           <input type="text" id="paint-request-note" placeholder="Комментарий (необязательно)" class="flex-1 p-2.5 bg-gray-50 rounded-2xl outline-none font-bold text-[11px] border border-transparent focus:border-blue-300">
         </div>
         <!-- Срочность заявки: та же логика, что и у заявки на ремонт (🟢🟡🔴) —
-             печатник помечает, стоит ли линия прямо сейчас. Влияет на порядок
-             очереди у колориста (см. sortPaintRequestsForQueue). -->
+             печатник помечает, стоит ли линия прямо сейчас. Это просто пометка
+             на карточке заявки — очередь у колориста всегда строго по порядку
+             поступления (см. sortPaintRequestsForQueue), кто заказал первым,
+             тот и наверху. -->
         <div class="space-y-1">
           <div class="text-[8px] font-bold text-gray-400 uppercase text-center">Срочность</div>
           <div id="paint-request-urgency-toggle" class="flex gap-1.5">
@@ -954,6 +946,20 @@
         </div>
         <div id="paint-request-queue-list" class="space-y-1.5"></div>
       </div>
+    </div>
+
+    <!-- ===== Блокировка вкладки «Колорист» на время внесения данных =====
+         Пока колорист/начальник смены/мастер УПП вносят эталон+замес+рецепт
+         по конкретной линии, старший печатник этой линии видит вкладку
+         только для чтения (оверлей ниже). Лок общий (в облаке), отдельный
+         на каждую линию (1-4). Снять лок может кто угодно, кроме печатника —
+         это подстраховка, если колорист забыл завершить внесение.
+         Блок намеренно смещён вниз (под заявки от печатников) — им
+         пользуются редко, и он не должен быть первым, что видно на вкладке. -->
+    <div id="colorist-lock-panel" class="hidden bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <h3 class="text-sm font-black text-gray-800 uppercase">🔒 Внесение данных по линиям</h3>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Начните внесение по своей линии — печатник этой линии не сможет менять данные, пока не завершите. Снять чужую блокировку можно кнопкой «Освободить» (например, если коллега забыл завершить).</p>
+      <div id="colorist-lock-lines" class="space-y-1.5"></div>
     </div>
 
     <!-- Заказ краски (блок выше) намеренно ВНЕ зоны блокировки — печатник
@@ -1610,6 +1616,25 @@
        артикулам и пигментам, которые чаще всего приходится корректировать. -->
   <div id="view-stats" class="hidden p-4 space-y-4">
     <h2 class="text-xl font-black text-gray-800 uppercase italic">📊 Статистика</h2>
+
+    <!-- ===== Статистика по заявкам «Нужна краска» — отдельно на каждого
+         колориста (см. paintRequests: ts / inProgressTs / doneTs / doneBy).
+         Колорист вписывает своё имя один раз (запоминается в localStorage),
+         и видит: сколько заявок он закрыл, сколько в среднем заявка ждала
+         (от заказа печатником до начала налива) и сколько в среднем занимал
+         сам налив (от начала работы до отметки «Налил»). -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-3">
+      <div class="flex items-center gap-2">
+        <span class="w-8 h-8 rounded-xl bg-teal-100 text-teal-700 inline-flex items-center justify-center text-base shrink-0">🧴</span>
+        <div class="min-w-0">
+          <div class="text-[11px] font-black uppercase text-gray-700">Статистика по заявкам краски</div>
+          <div class="text-[9px] text-gray-400 leading-relaxed">Впишите своё имя колориста — покажем время ожидания и время налива по вашим заявкам</div>
+        </div>
+      </div>
+      <input type="text" id="paint-stats-name-input" placeholder="Ваше имя (колорист)" oninput="onPaintStatsNameInput()" class="w-full p-3 bg-gray-50 rounded-2xl outline-none font-bold text-sm border border-transparent focus:border-blue-300">
+      <div id="paint-stats-content"></div>
+    </div>
+
     <div id="stats-content" class="space-y-4"></div>
   </div>
 
@@ -3855,15 +3880,12 @@ function paintRequestUrgencyLabel(u) {
   if (u === 'low') return 'Не срочно';
   return 'В течение смены';
 }
-// Очередь у колориста: сначала самые срочные (стоит линия), внутри одной
-// срочности — от самой старой заявки к новой, её и стоит брать первой.
+// Очередь у колориста: строго по порядку поступления заявки (кто раньше
+// заказал — тот выше в списке и его нужно брать первым), без учёта срочности —
+// срочность (🟢🟡🔴) остаётся как пометка на самой карточке заявки, но
+// порядок в очереди не меняет.
 function sortPaintRequestsForQueue(list) {
-  const rank = { high: 0, medium: 1, low: 2 };
-  return list.slice().sort((a, b) => {
-    const ra = rank[a.urgency] ?? 1, rb = rank[b.urgency] ?? 1;
-    if (ra !== rb) return ra - rb;
-    return a.ts - b.ts;
-  });
+  return list.slice().sort((a, b) => a.ts - b.ts);
 }
 // Если заявка висит в pending дольше этого времени — считаем линию
 // простаивающей и один раз сигналим начальнику смены (см. checkOverdueRequests).
@@ -4148,6 +4170,78 @@ function paintRequestStatusIcon(s) {
   if (s === 'done') return '✅';
   if (s === 'cancelled') return '⚪';
   return '🟡';
+}
+
+// ===== Статистика по заявкам «Нужна краска» — на каждого колориста =====
+// Колорист один раз вписывает своё имя (сохраняется в localStorage на его
+// устройстве, как и порог простоя выше) — дальше вкладка «Статистика»
+// сама считает по полю paintRequests, сколько заявок он закрыл (doneBy),
+// сколько в среднем заявка ждала до начала налива (ts → inProgressTs, либо
+// ts → doneTs, если статус "в работе" не отмечался отдельно) и сколько в
+// среднем занимал сам налив (inProgressTs → doneTs).
+const PAINT_STATS_NAME_KEY = 'colorist_paint_stats_name';
+function loadPaintStatsName() {
+  return (localStorage.getItem(PAINT_STATS_NAME_KEY) || '').trim();
+}
+function onPaintStatsNameInput() {
+  const input = document.getElementById('paint-stats-name-input');
+  const name = (input && input.value || '').trim();
+  localStorage.setItem(PAINT_STATS_NAME_KEY, name);
+  renderPaintRequestStats();
+}
+// Короткая длительность в минутах/часах — как paintRequestElapsedLabel, но
+// без "назад", т.к. считает интервал между двумя метками времени, а не
+// "сколько прошло с этого момента до сейчас".
+function formatDurationMs(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '—';
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return '< 1 мин';
+  if (mins < 60) return mins + ' мин';
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return h + ' ч ' + m + ' мин';
+}
+function renderPaintRequestStats() {
+  const el = document.getElementById('paint-stats-content');
+  const input = document.getElementById('paint-stats-name-input');
+  if (!el || !input) return;
+  const savedName = loadPaintStatsName();
+  if (!input.value && savedName) input.value = savedName;
+  else if (!input.value && !savedName && currentUserProfile && currentUserProfile.role === 'colorist' && currentUserProfile.name) {
+    input.value = currentUserProfile.name; // подсказка для колориста, вошедшего в личный кабинет — можно поправить вручную
+  }
+  const name = input.value.trim().toLowerCase();
+  if (!name) { el.innerHTML = '<p class="text-gray-400 text-xs text-center py-3">Впишите имя выше, чтобы увидеть свою статистику</p>'; return; }
+  const mine = (paintRequests || []).filter(r => r.status === 'done' && String(r.doneBy || '').trim().toLowerCase() === name);
+  if (!mine.length) { el.innerHTML = '<p class="text-gray-400 text-xs text-center py-3">Пока нет завершённых заявок на имя «' + escapeHtmlProd(input.value.trim()) + '»</p>'; return; }
+  const rows = mine.map(r => {
+    const startTs = (typeof r.inProgressTs === 'number') ? r.inProgressTs : r.ts;
+    const waitMs = startTs - r.ts;
+    const pourMs = (typeof r.doneTs === 'number') ? r.doneTs - startTs : null;
+    return { r, waitMs, pourMs };
+  }).sort((a, b) => b.r.doneTs - a.r.doneTs);
+  const withWait = rows.filter(x => Number.isFinite(x.waitMs) && x.waitMs >= 0);
+  const withPour = rows.filter(x => Number.isFinite(x.pourMs) && x.pourMs >= 0);
+  const avgWait = withWait.length ? withWait.reduce((s, x) => s + x.waitMs, 0) / withWait.length : null;
+  const avgPour = withPour.length ? withPour.reduce((s, x) => s + x.pourMs, 0) / withPour.length : null;
+  const recent = rows.slice(0, 15);
+  el.innerHTML = `
+    <div class="grid grid-cols-3 gap-2">
+      <div class="bg-gray-100 rounded-2xl p-3 text-center"><div class="text-xl font-black text-gray-700">${mine.length}</div><div class="text-[8px] font-black uppercase text-gray-400">заявок закрыто</div></div>
+      <div class="bg-amber-50 rounded-2xl p-3 text-center"><div class="text-sm font-black text-amber-700 leading-tight">${avgWait !== null ? formatDurationMs(avgWait) : '—'}</div><div class="text-[8px] font-black uppercase text-amber-500">ср. ожидание</div></div>
+      <div class="bg-emerald-50 rounded-2xl p-3 text-center"><div class="text-sm font-black text-emerald-700 leading-tight">${avgPour !== null ? formatDurationMs(avgPour) : '—'}</div><div class="text-[8px] font-black uppercase text-emerald-500">ср. налив</div></div>
+    </div>
+    <div class="text-[9px] font-black uppercase tracking-wide text-gray-400 mt-3 mb-1.5">Последние заявки</div>
+    <div class="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+      ${recent.map(({ r, waitMs, pourMs }) => `
+        <div class="flex items-center justify-between gap-2 bg-gray-50 rounded-xl px-3 py-2 text-[10px]">
+          <div class="min-w-0">
+            <div class="font-black text-gray-800 truncate">${escapeHtmlProd(r.article || '')} <span class="text-gray-400 font-bold">· линия ${escapeHtmlProd(String(r.line || ''))}</span></div>
+            <div class="text-gray-400">ожидание ${formatDurationMs(waitMs)} · налив ${pourMs !== null ? formatDurationMs(pourMs) : '—'}</div>
+          </div>
+          <span class="shrink-0 text-gray-300">${r.doneTs ? new Date(r.doneTs).toLocaleDateString('ru-RU') : ''}</span>
+        </div>`).join('')}
+    </div>
+  `;
 }
 
 // Печатник видит форму + свои последние заявки; колорист/начальник смены —
@@ -8855,6 +8949,7 @@ function switchView(view) {
     stats.classList.remove('hidden');
     btnStats.classList.remove(...inactiveClasses); btnStats.classList.add(...activeClasses);
     renderStatsView();
+    renderPaintRequestStats();
   } else if (view === 'preview') {
     preview.classList.remove('hidden');
     btnPreview.classList.remove(...inactiveClasses); btnPreview.classList.add(...activeClasses);
@@ -8911,7 +9006,7 @@ const HELP_SECTIONS = [
       { q: '✅ Сдать партию (чек-лист)', a: 'Открывает финальный чек-лист перед тем, как считать партию готовой и сданной.' },
       { q: 'WhatsApp / Telegram / Печать', a: 'Отправляет текущий рецепт в мессенджер или готовит его к печати/сохранению как PDF — без необходимости переписывать вручную.' },
       { q: '🧴 Нужна краска (заявка от печатника)', a: 'Старший печатник заказывает краску прямо на этой вкладке: артикул/цвет, количество (напр. «5 кг»), комментарий и срочность — 🟢 не срочно, 🟡 в течение смены, 🔴 стоит линия. Заявка уходит в общую очередь колористу и начальнику смены. Печатник видит статус своей заявки, сколько заявок ждёт впереди, и получает уведомление на весь экран, когда краска налита — или короткое уведомление, если заявку отменили.' },
-      { q: 'Очередь заявок у колориста / начальника смены', a: 'Показывает все активные заявки от печатников по всем линиям. Заявки с срочностью 🔴 «Стоит линия» всегда идут первыми, внутри одной срочности — от самой давней. Просроченные (дольше порога простоя) подсвечиваются красным. «Взял» переводит заявку в работу, «Налил» одновременно закрывает заявку и шлёт печатнику алерт «Краска налита».' },
+      { q: 'Очередь заявок у колориста / начальника смены', a: 'Показывает все активные заявки от печатников по всем линиям строго по порядку поступления — кто заказал раньше, тот выше в списке и его нужно брать первым. Отметка срочности (🟢🟡🔴) видна на самой карточке заявки, но порядок в очереди не меняет. Просроченные (дольше порога простоя) подсвечиваются красным. «Взял» переводит заявку в работу, «Налил» одновременно закрывает заявку и шлёт печатнику алерт «Краска налита».' },
       { q: '🔒 Внесение данных по линиям', a: 'Панель вверху вкладки: колорист, начальник смены или мастер УПП нажимают «Начать внесение» по своей линии перед тем, как вносить эталон/замес/рецепт. Пока лок активен, старший печатник этой линии видит вместо формы экран «Идёт внесение данных» и не может ничего менять — заказ краски при этом продолжает работать как обычно. По окончании нажимается «Завершить»; если коллега забыл это сделать, снять чужую блокировку может кто угодно, кроме старшего печатника, кнопкой «Освободить». Другие линии эта блокировка не затрагивает.' }
     ]
   },
