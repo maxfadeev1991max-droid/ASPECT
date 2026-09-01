@@ -2892,6 +2892,35 @@ async function pushCloudSnapshot(record) {
   return true;
 }
 
+// ---- Надёжная запись с проверкой и повтором (исправление гонки записи) ----
+// Раньше каждое действие делало fetch → изменить → push ЦЕЛОГО объекта.
+// Если два человека (например, печатник отправляет заявку и в этот же
+// момент у колориста уходит heartbeat presence раз в 30с) успевали сделать
+// это почти одновременно, тот, кто записал вторым, затирал своей — более
+// старой — копией объекта изменения первого. Из-за этого заявка иногда
+// "исчезала", толком не дойдя до колориста. Эта обёртка после записи
+// перечитывает базу и проверяет, что изменение реально сохранилось; если
+// его затёрли — повторяет попытку с СВЕЖИМИ данными ещё раз.
+async function pushCloudSnapshotWithRetry(mutateFn, verifyFn, maxAttempts) {
+  maxAttempts = maxAttempts || 3;
+  let lastRemote = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const remote = await fetchCloudSnapshot();
+    if (!remote) throw new Error('Нет ответа от таблицы');
+    const result = mutateFn(remote);
+    await pushCloudSnapshot(remote);
+    lastRemote = remote;
+    if (!verifyFn) return { remote, result };
+    const check = await fetchCloudSnapshot();
+    if (check && verifyFn(check)) return { remote: check, result };
+    lastRemote = check || remote;
+    // Не удалось подтвердить — кто-то другой записал почти одновременно;
+    // короткая пауза и повтор со свежими данными.
+    await new Promise(r => setTimeout(r, 250 + Math.random() * 250));
+  }
+  return { remote: lastRemote, result: null, unverified: true };
+}
+
 function toggleSyncSettings() {
   const panel = document.getElementById('sync-settings-panel');
   if (!panel) return;
@@ -3348,6 +3377,23 @@ async function syncFromSheetDb(isManual) {
     if (typeof renderOnlineUsers === 'function') renderOnlineUsers(remote.presence);
     applyIncomingChat(remote.chat);
     applyIncomingMultipliers(remote);
+    // ВАЖНО (исправление бага "заявка колористу не приходит"): раньше этот
+    // общий цикл синхронизации (каждые 30с + при возврате в приложение) не
+    // трогал paintRequests/paintAlert/coloristLocks вообще — они обновлялись
+    // только через отдельный 5-секундный опрос checkPaintAlertOnce. Если тот
+    // опрос по какой-то причине не был запущен (например, сразу после
+    // обновления страницы, пока роль ещё не восстановилась), заявка могла
+    // быть "невидима" до следующего ручного действия. Теперь дублируем
+    // обновление и здесь.
+    if (Array.isArray(remote.paintRequests)) paintRequests = remote.paintRequests;
+    if (remote.coloristLocks) coloristLocks = remote.coloristLocks;
+    applyIncomingPaintAlert(remote.paintAlert || null);
+    if (currentUserProfile) {
+      renderPaintRequestsSection();
+      if (typeof renderColoristLockUI === 'function') renderColoristLockUI();
+      checkOverdueRequests();
+      notifyNewPaintRequests();
+    }
   } catch (e) {
     console.error(e);
     setSyncStatus('⚠️ Не удалось обновить из общей базы: ' + (e.message || e));
@@ -3698,10 +3744,10 @@ async function announcePaintPoured(line) {
   if (btn) btn.disabled = true;
   const alertObj = { ts: Date.now(), name: currentUserProfile.name, line: line || null };
   try {
-    const remote = await fetchCloudSnapshot();
-    if (!remote) throw new Error('Нет ответа от таблицы');
-    remote.paintAlert = alertObj;
-    await pushCloudSnapshot(remote);
+    await pushCloudSnapshotWithRetry(
+      (remote) => { remote.paintAlert = alertObj; return alertObj; },
+      (remote) => !!remote.paintAlert && remote.paintAlert.ts === alertObj.ts
+    );
     toast('✅ Отправлено — линия ' + line + ': печатник этой линии и начальник смены увидят «Краска налита» на весь экран');
   } catch (e) {
     console.error(e);
@@ -3711,15 +3757,22 @@ async function announcePaintPoured(line) {
   }
 }
 
+// Было 5000мс — по просьбе колористов/печатников обновление сделано заметно
+// быстрее (2с). Плюс опрос теперь сразу перезапускается при возврате в
+// приложение/вкладку, а не ждёт следующего тика таймера.
+const PAINT_ALERT_POLL_MS = 2000;
 function startPaintAlertPolling() {
   if (paintAlertPollTimer) return;
   shownPaintAlertTs = loadShownPaintAlertTs();
   checkPaintAlertOnce();
-  paintAlertPollTimer = setInterval(checkPaintAlertOnce, 5000);
+  paintAlertPollTimer = setInterval(checkPaintAlertOnce, PAINT_ALERT_POLL_MS);
 }
 function stopPaintAlertPolling() {
   if (paintAlertPollTimer) { clearInterval(paintAlertPollTimer); paintAlertPollTimer = null; }
 }
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && currentUserProfile) checkPaintAlertOnce();
+});
 async function checkPaintAlertOnce() {
   const cfg = sheetDbConfig || loadSheetDbConfig();
   if (!cfg || !cfg.url) return;
@@ -3733,8 +3786,38 @@ async function checkPaintAlertOnce() {
       renderColoristLockUI();
       checkOverdueRequests();
       checkCancelledOwnRequests();
+      notifyNewPaintRequests();
     }
   } catch (e) { /* тихо игнорируем — повторим на следующем цикле опроса */ }
+}
+// Уведомление (звук + системный Notification, если разрешён) колористу/
+// начальнику смены о КАЖДОЙ новой заявке "нужна краска", как только она
+// впервые появилась в общей базе — а не только когда она уже "простаивает"
+// (это отдельно делает checkOverdueRequests). Раньше новая заявка просто
+// молча добавлялась в список, и если колорист не смотрел на экран — заявка
+// фактически "не доходила" до него.
+const NEW_PAINT_REQUEST_NOTIFIED_KEY = 'colorist_paint_request_new_notified_ids';
+function loadNewRequestNotifiedIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(NEW_PAINT_REQUEST_NOTIFIED_KEY) || '[]')); }
+  catch (e) { return new Set(); }
+}
+function saveNewRequestNotifiedIds(set) {
+  try { localStorage.setItem(NEW_PAINT_REQUEST_NOTIFIED_KEY, JSON.stringify(Array.from(set).slice(-300))); } catch (e) {}
+}
+let newRequestNotifiedIds = loadNewRequestNotifiedIds();
+function notifyNewPaintRequests() {
+  const role = currentUserProfile && currentUserProfile.role;
+  if (role !== 'colorist' && role !== 'shift_lead') return;
+  let changed = false;
+  paintRequests.filter(r => r.status === 'pending').forEach(r => {
+    if (!newRequestNotifiedIds.has(r.id)) {
+      newRequestNotifiedIds.add(r.id);
+      changed = true;
+      playPaintAlertSound();
+      firePushNotification('🧴 Новая заявка на краску — линия ' + r.line, (r.printerName ? r.printerName + ': ' : '') + '«' + r.article + '»' + (r.qty ? ', ' + r.qty : ''));
+    }
+  });
+  if (changed) saveNewRequestNotifiedIds(newRequestNotifiedIds);
 }
 
 // ===== Заявки «Нужна краска»: печатник → колорист =====
@@ -3959,28 +4042,36 @@ async function submitPaintRequest() {
   if (!cfg || !cfg.url) { toast('Подключите общую базу (☁️ в шапке) — иначе колорист не увидит заявку.'); return; }
   const btn = document.getElementById('paint-request-submit-btn');
   if (btn) btn.disabled = true;
+  const req = {
+    id: 'pr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+    ts: Date.now(),
+    line: currentUserProfile.line,
+    printerName: currentUserProfile.name,
+    article, note, qty, urgency,
+    status: 'pending'
+  };
   try {
-    const remote = await fetchCloudSnapshot();
-    if (!remote) throw new Error('Нет ответа от таблицы');
-    const req = {
-      id: 'pr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
-      ts: Date.now(),
-      line: currentUserProfile.line,
-      printerName: currentUserProfile.name,
-      article, note, qty, urgency,
-      status: 'pending'
-    };
-    remote.paintRequests = Array.isArray(remote.paintRequests) ? remote.paintRequests : [];
-    remote.paintRequests.push(req);
-    await pushCloudSnapshot(remote);
-    paintRequests = remote.paintRequests;
+    const outcome = await pushCloudSnapshotWithRetry(
+      (remote) => {
+        remote.paintRequests = Array.isArray(remote.paintRequests) ? remote.paintRequests : [];
+        // На повторной попытке заявка уже могла быть добавлена — не дублируем.
+        if (!remote.paintRequests.some(r => r.id === req.id)) remote.paintRequests.push(req);
+        return req;
+      },
+      (remote) => Array.isArray(remote.paintRequests) && remote.paintRequests.some(r => r.id === req.id)
+    );
+    paintRequests = outcome.remote.paintRequests || [];
+    if (outcome.unverified) {
+      toast('⚠️ Заявка отправлена, но не удалось подтвердить доставку — проверьте в списке или отправьте ещё раз.');
+    } else {
+      toast('✅ Заявка на «' + article + '» отправлена колористу — линия ' + currentUserProfile.line);
+    }
     if (articleEl) articleEl.value = '';
     if (noteEl) noteEl.value = '';
     if (qtyEl) qtyEl.value = '';
     paintRequestUrgency = 'medium';
     renderPaintRequestUrgencyToggle();
     renderPaintRequestsSection();
-    toast('✅ Заявка на «' + article + '» отправлена колористу — линия ' + currentUserProfile.line);
   } catch (e) {
     console.error(e);
     toast('Не удалось отправить заявку — проверьте интернет и подключение общей базы (☁️).');
@@ -3993,20 +4084,27 @@ async function updatePaintRequestStatus(id, newStatus) {
   const cfg = sheetDbConfig || loadSheetDbConfig();
   if (!cfg || !cfg.url) { toast('Нет подключения к общей базе (☁️).'); return null; }
   try {
-    const remote = await fetchCloudSnapshot();
-    if (!remote) throw new Error('Нет ответа от таблицы');
-    remote.paintRequests = Array.isArray(remote.paintRequests) ? remote.paintRequests : [];
-    const req = remote.paintRequests.find(r => r.id === id);
-    if (!req) { toast('Заявка уже не актуальна — список обновлён.'); paintRequests = remote.paintRequests; renderPaintRequestsSection(); return null; }
-    req.status = newStatus;
     const who = currentUserProfile ? currentUserProfile.name : null;
-    if (newStatus === 'in_progress') { req.inProgressBy = who; req.inProgressTs = Date.now(); }
-    if (newStatus === 'done') { req.doneBy = who; req.doneTs = Date.now(); }
-    if (newStatus === 'cancelled') { req.cancelledBy = who; req.cancelledTs = Date.now(); }
-    await pushCloudSnapshot(remote);
-    paintRequests = remote.paintRequests;
+    const outcome = await pushCloudSnapshotWithRetry(
+      (remote) => {
+        remote.paintRequests = Array.isArray(remote.paintRequests) ? remote.paintRequests : [];
+        const req = remote.paintRequests.find(r => r.id === id);
+        if (!req) return null;
+        req.status = newStatus;
+        if (newStatus === 'in_progress') { req.inProgressBy = who; req.inProgressTs = Date.now(); }
+        if (newStatus === 'done') { req.doneBy = who; req.doneTs = Date.now(); }
+        if (newStatus === 'cancelled') { req.cancelledBy = who; req.cancelledTs = Date.now(); }
+        return req;
+      },
+      (remote) => {
+        const r = Array.isArray(remote.paintRequests) ? remote.paintRequests.find(x => x.id === id) : null;
+        return !!r && r.status === newStatus;
+      }
+    );
+    paintRequests = outcome.remote.paintRequests || [];
     renderPaintRequestsSection();
-    return req;
+    if (!outcome.result) { toast('Заявка уже не актуальна — список обновлён.'); return null; }
+    return outcome.result;
   } catch (e) {
     console.error(e);
     toast('Не удалось обновить заявку — проверьте интернет.');
@@ -4086,7 +4184,15 @@ function renderPaintRequestsSection() {
         </div>`;
       }).join('') : '<div class="text-[10px] text-gray-400 text-center py-2">Заявок пока нет</div>';
     }
-  } else if (role === 'colorist' || role === 'shift_lead') {
+  } else if (role === 'colorist' || role === 'shift_lead' || role === 'upp_master' || role === 'production_director' || role === 'shop_chief') {
+    // По просьбе: заявки "нужна краска" должны видеть ВСЕ участники
+    // приложения, а не только колорист и начальник смены. Начальник цеха и
+    // производственный директор видят очередь в режиме только для чтения
+    // (без кнопок действий) — принимать заявку в работу или отмечать
+    // "налил" по-прежнему могут только те, кто её реально выполняет
+    // (колорист, начальник смены, мастер УПП — те же роли, что ведут
+    // внесение эталона/замеса, см. COLORIST_LOCK_EDITOR_ROLES).
+    const canAct = role === 'colorist' || role === 'shift_lead' || role === 'upp_master';
     wrap.classList.remove('hidden');
     document.getElementById('paint-request-form').classList.add('hidden');
     document.getElementById('paint-request-queue').classList.remove('hidden');
@@ -4104,6 +4210,12 @@ function renderPaintRequestsSection() {
         metaParts.push('печатник ' + (r.printerName || ''));
         if (r.qty) metaParts.push(escapeHtmlProd(r.qty));
         if (r.note) metaParts.push(escapeHtmlProd(r.note));
+        const actions = canAct ? `
+            <div class="flex gap-1 shrink-0">
+              ${r.status === 'pending' ? `<button onclick="updatePaintRequestStatus('${r.id}','in_progress')" class="bg-blue-600 text-white text-[9px] font-black uppercase px-2 py-1.5 rounded-lg">Взял</button>` : ''}
+              <button onclick="fulfillPaintRequest('${r.id}')" class="bg-green-600 text-white text-[9px] font-black uppercase px-2 py-1.5 rounded-lg">Налил</button>
+              <button onclick="cancelPaintRequest('${r.id}')" class="text-gray-300 text-[10px] px-1">✕</button>
+            </div>` : '';
         return `
         <div class="rounded-xl px-3 py-2.5 ${boxClass}">
           <div class="flex items-center justify-between gap-2">
@@ -4111,11 +4223,7 @@ function renderPaintRequestsSection() {
               <div class="font-black text-gray-800 text-[11px] truncate">${paintRequestUrgencyIcon(r.urgency)} ${escapeHtmlProd(r.article)} <span class="text-gray-400 font-bold">· линия ${escapeHtmlProd(String(r.line))}</span></div>
               <div class="text-[9px] ${overdue ? 'text-red-500 font-black' : 'text-gray-400'}" title="${paintRequestUrgencyLabel(r.urgency)}">${metaParts.join(' · ')}</div>
             </div>
-            <div class="flex gap-1 shrink-0">
-              ${r.status === 'pending' ? `<button onclick="updatePaintRequestStatus('${r.id}','in_progress')" class="bg-blue-600 text-white text-[9px] font-black uppercase px-2 py-1.5 rounded-lg">Взял</button>` : ''}
-              <button onclick="fulfillPaintRequest('${r.id}')" class="bg-green-600 text-white text-[9px] font-black uppercase px-2 py-1.5 rounded-lg">Налил</button>
-              <button onclick="cancelPaintRequest('${r.id}')" class="text-gray-300 text-[10px] px-1">✕</button>
-            </div>
+            ${actions}
           </div>
         </div>`;
       }).join('') : '<div class="text-[10px] text-gray-400 text-center py-2">Заявок нет</div>';
