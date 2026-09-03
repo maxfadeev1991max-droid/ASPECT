@@ -3675,16 +3675,23 @@ async function sendPresenceHeartbeat() {
   const cfg = sheetDbConfig || loadSheetDbConfig();
   if (!cfg || !cfg.url) { renderOnlineUsers([]); return; }
   try {
-    const remote = await fetchCloudSnapshot();
-    if (!remote) return;
     const now = Date.now();
-    let presence = remote.presence || [];
-    presence = presence.filter(p => p && p.name && (now - (p.ts || 0)) < PRESENCE_STALE_MS && p.name !== currentUserProfile.name);
-    presence.push({ name: currentUserProfile.name, role: currentUserProfile.role, line: currentUserProfile.line || null, ts: now });
-    remote.presence = presence;
-    const ok = await pushCloudSnapshot(remote);
-    if (ok) {
-      renderOnlineUsers(presence);
+    // ВАЖНО: раньше здесь был один fetch + push ВСЕГО объекта, сделанный
+    // заранее — если к моменту фактической отправки кто-то другой (например,
+    // «Линия поехала» у начальника смены) уже успел записать более свежие
+    // данные в другое поле той же таблицы, heartbeat тихо затирал их своей
+    // устаревшей копией. pushCloudSnapshotWithRetry читает базу заново
+    // непосредственно перед отправкой и перепроверяет результат — это резко
+    // сужает окно гонки (та же защита, что и у остальной синхронизации).
+    let presence = [];
+    const { remote } = await pushCloudSnapshotWithRetry((r) => {
+      presence = (r.presence || []).filter(p => p && p.name && (now - (p.ts || 0)) < PRESENCE_STALE_MS && p.name !== currentUserProfile.name);
+      presence.push({ name: currentUserProfile.name, role: currentUserProfile.role, line: currentUserProfile.line || null, ts: now });
+      r.presence = presence;
+      return presence;
+    }, (r) => Array.isArray(r.presence) && r.presence.some(p => p && p.name === currentUserProfile.name && p.ts === now), 2);
+    renderOnlineUsers(presence);
+    if (remote) {
       applyIncomingChat(remote.chat);
       applyIncomingMultipliers(remote);
     }
@@ -13191,6 +13198,10 @@ function parseMultiBlockOrdersSheet(sheet) {
       const article = artVal == null ? '' : String(artVal).trim();
       if (!article) return;
       let qty = b.qtyCol >= 0 ? parseFloat(String(row[b.qtyCol]).replace(',', '.').replace(/[^0-9.\-]/g, '')) : NaN;
+      // «Количество» в реальных заданиях цеха почти всегда указано в рулонах,
+      // а не в метрах — переводим в метры (внутренняя единица приложения),
+      // если из текста заголовка колонки явно не следует, что это уже метры.
+      if (!isNaN(qty) && !/метр/.test(norm(headerRow[b.qtyCol]))) qty = Math.round(qty * METERS_PER_ROLL * 10) / 10;
       const commentParts = [];
       for (let c = b.rangeStart; c <= b.rangeEnd; c++) {
         if (c === b.artCol || c === b.qtyCol || c === b.dateCol || c === b.sectCol || c === b.hoursCol) continue;
@@ -13252,7 +13263,10 @@ async function handleOrdersExcelImport(evt, statusElId) {
         if (!article) { skipped++; return; }
         const qtyKey = findKey(row, ['метр', 'кол-во', 'колич', 'рулон', 'тираж']);
         let qty = qtyKey ? parseFloat(String(row[qtyKey]).replace(',', '.').replace(/[^0-9.\-]/g, '')) : NaN;
-        if (qtyKey && !isNaN(qty) && /рулон/i.test(qtyKey)) qty = Math.round(qty * METERS_PER_ROLL * 10) / 10;
+        // Как и в многоблочном разборе выше: считаем рулонами по умолчанию,
+        // переводим в метры, если из названия колонки явно не следует, что
+        // там уже метры.
+        if (qtyKey && !isNaN(qty) && !/метр/i.test(qtyKey)) qty = Math.round(qty * METERS_PER_ROLL * 10) / 10;
         const lineKey = findKey(row, ['лини']);
         const deadlineKey = findKey(row, ['срок', 'дата']);
         const urgentKey = findKey(row, ['срочн', 'приоритет']);
@@ -13345,10 +13359,11 @@ function deleteProductionOrder(id) {
 function addOrderProgress(id) {
   const order = productionOrders.find(o => o.id === id);
   if (!order) return;
-  const input = prompt(`Сколько метров сдано по «${order.article}» добавить к выполнению?`, '');
+  const input = prompt(`Сколько рулонов сдано по «${order.article}» добавить к выполнению?`, '');
   const val = parseFloat((input || '').replace(',', '.'));
   if (!val || val <= 0) return;
-  order.producedQty = Math.round(((order.producedQty || 0) + val) * 10) / 10;
+  const meters = Math.round(val * METERS_PER_ROLL * 10) / 10;
+  order.producedQty = Math.round(((order.producedQty || 0) + meters) * 10) / 10;
   const target = parseFloat(order.qty);
   if (target && order.producedQty >= target && order.status !== 'done') order.status = 'done';
   else if (order.status === 'planned') order.status = 'in_progress';
@@ -13371,18 +13386,20 @@ function renderOrdersList() {
     const target = parseFloat(o.qty);
     const produced = o.producedQty || 0;
     const pct = target ? Math.min(100, Math.round(produced / target * 100)) : null;
+    const targetRolls = target ? Math.round(target / METERS_PER_ROLL * 10) / 10 : null;
+    const producedRolls = Math.round(produced / METERS_PER_ROLL * 10) / 10;
     return `
     <div class="bg-white border border-gray-100 rounded-2xl p-3 space-y-1.5">
       <div class="flex items-center gap-2">
         <div class="flex-1 min-w-0">
-          <div class="text-[11px] font-black text-gray-800 flex items-center gap-1 flex-wrap">${escapeHtmlProd(o.article)} ${o.qty ? '· ' + escapeHtmlProd(o.qty) + ' м' : ''} ${orderPriorityBadge(o)}</div>
-          <div class="text-[9px] text-gray-400 mt-0.5">${o.line ? 'линия ' + escapeHtmlProd(o.line) + ' · ' : ''}${o.deadline ? 'срок ' + o.deadline : 'срок не задан'}${pct != null ? ' · сдано ' + produced + ' из ' + target + ' м (' + pct + '%)' : ''}</div>
+          <div class="text-[11px] font-black text-gray-800 flex items-center gap-1 flex-wrap">${escapeHtmlProd(o.article)} ${targetRolls != null ? '· ' + escapeHtmlProd(targetRolls) + ' рул. (' + escapeHtmlProd(o.qty) + ' м)' : ''} ${orderPriorityBadge(o)}</div>
+          <div class="text-[9px] text-gray-400 mt-0.5">${o.line ? 'линия ' + escapeHtmlProd(o.line) + ' · ' : ''}${o.deadline ? 'срок ' + o.deadline : 'срок не задан'}${pct != null ? ' · сдано ' + producedRolls + ' из ' + targetRolls + ' рул. (' + pct + '%)' : ''}</div>
         </div>
         <button onclick="advanceOrderStatus('${o.id}')" class="text-[9px] font-black bg-blue-50 text-blue-700 px-2.5 py-1.5 rounded-xl shrink-0">${ORDER_STATUS_LABELS[o.status] || o.status}</button>
         <button onclick="deleteProductionOrder('${o.id}')" class="text-[9px] bg-red-50 text-red-600 px-2 py-1.5 rounded-xl font-black shrink-0">🗑</button>
       </div>
       ${pct != null ? `<div class="h-1.5 bg-gray-100 rounded-full overflow-hidden"><div class="h-full ${pct >= 100 ? 'bg-emerald-500' : 'bg-blue-500'} rounded-full" style="width:${pct}%"></div></div>` : ''}
-      <button onclick="addOrderProgress('${o.id}')" class="text-[9px] font-black bg-gray-50 text-gray-600 px-2.5 py-1.5 rounded-xl">➕ отметить выполнение, м</button>
+      <button onclick="addOrderProgress('${o.id}')" class="text-[9px] font-black bg-gray-50 text-gray-600 px-2.5 py-1.5 rounded-xl">➕ отметить выполнение, рул.</button>
     </div>`;
   }).join('') : '<p class="text-gray-400 text-center py-4 text-xs">План пуст</p>';
 }
