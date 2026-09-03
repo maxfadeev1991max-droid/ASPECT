@@ -2223,6 +2223,15 @@
   <h2 class="text-xl font-black text-gray-800 uppercase italic">📊 Панель</h2>
   <div id="dash-no-role" class="hidden bg-white border border-gray-100 rounded-2xl p-4 text-[11px] text-gray-500 text-center">Войдите в личный кабинет (👤 наверху), чтобы увидеть свою панель.</div>
 
+  <!-- Статус всех линий — видно ВСЕМ ролям сразу, без переключения селектора линии.
+       Данные берутся из lineRuns, который синхронизируется через общую базу
+       (см. checkPaintAlertOnce, опрос раз в 2с), поэтому кто бы ни нажал
+       «Линия поехала» на любом устройстве — тут появится у всех. -->
+  <div id="dash-all-lines-status-wrap" class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+    <div class="text-[10px] font-black uppercase text-gray-500">🚦 Статус линий сейчас</div>
+    <div id="dash-all-lines-status" class="space-y-1.5"></div>
+  </div>
+
   <!-- Печатник / ст.печатник -->
   <div id="dash-printer-section" class="hidden space-y-4">
     <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
@@ -4409,6 +4418,7 @@ async function checkPaintAlertOnce() {
       saveShiftReports(shiftReports);
       lineRuns = Array.isArray(remote.lineRuns) ? remote.lineRuns : lineRuns;
       saveLineRuns(lineRuns);
+      if (typeof renderAllLinesStatus === 'function') renderAllLinesStatus();
       const role = currentUserProfile && currentUserProfile.role;
       if (role === 'upp_master') renderOrdersList();
       if (role === 'senior_printer') renderLineRunCard('printer');
@@ -11873,6 +11883,7 @@ function renderDashboardView() {
   };
   const noRole = document.getElementById('dash-no-role');
   Object.values(sections).forEach(s => s && s.classList.add('hidden'));
+  if (typeof renderAllLinesStatus === 'function') renderAllLinesStatus();
   const role = currentUserProfile && currentUserProfile.role;
   if (!role) { if (noRole) noRole.classList.remove('hidden'); return; }
   if (noRole) noRole.classList.add('hidden');
@@ -12750,7 +12761,37 @@ function scheduleLineRunTick(prefix) {
 function stopLineRunTick(prefix) {
   if (_lineRunTimers[prefix]) { clearInterval(_lineRunTimers[prefix]); _lineRunTimers[prefix] = null; }
 }
+// Сводка по всем линиям сразу — рендерится в блоке «🚦 Статус линий сейчас»,
+// который виден на панели у ЛЮБОЙ роли (не только у того, кто нажал «Линия
+// поехала»). Источник данных — тот же общий массив lineRuns, что и у
+// renderLineRunCard, поэтому ничего отдельно синхронизировать не нужно:
+// достаточно вызывать эту функцию везде, где уже перерисовывается панель
+// (renderDashboardView) и при каждом опросе общей базы (checkPaintAlertOnce).
+function renderAllLinesStatus() {
+  const el = document.getElementById('dash-all-lines-status');
+  if (!el) return;
+  const lineNumbers = ['1', '2', '3', '4'];
+  el.innerHTML = lineNumbers.map(n => {
+    const active = lineRuns.find(r => normalizeLineKey(r.line) === n && !r.endTs);
+    if (!active) {
+      return `<div class="flex items-center justify-between bg-gray-50 rounded-xl p-2.5">
+        <span class="text-[11px] font-bold text-gray-400">Линия ${n} — простаивает</span>
+      </div>`;
+    }
+    const elapsedMs = Date.now() - active.startTs;
+    const h = Math.floor(elapsedMs / 3600000), m = Math.floor((elapsedMs % 3600000) / 60000);
+    const estMeters = active.speedMPerMin != null ? Math.round(((active.offsetMeters || 0) + active.speedMPerMin * (elapsedMs / 60000)) * 10) / 10 : null;
+    return `<div class="flex items-center justify-between bg-emerald-50 border border-emerald-100 rounded-xl p-2.5 gap-2">
+      <div class="min-w-0">
+        <div class="text-[11px] font-black text-emerald-800 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>Линия ${n}</div>
+        <div class="text-[10px] text-emerald-700 font-bold truncate">${escapeHtmlProd(active.article)}</div>
+      </div>
+      <div class="text-[9px] text-emerald-600 text-right shrink-0">${h} ч ${m} мин${estMeters != null ? '<br>~' + estMeters + ' м' : ''}</div>
+    </div>`;
+  }).join('');
+}
 function renderLineRunCard(prefix) {
+  if (typeof renderAllLinesStatus === 'function') renderAllLinesStatus();
   const el = document.getElementById('dash-linerun-' + prefix);
   if (!el) return;
   const line = getLineForRunPrefix(prefix);
@@ -13128,6 +13169,12 @@ async function handleOrdersExcelImport(evt, statusElId) {
     saveProductionOrders(productionOrders);
     renderOrdersList();
     syncArrayToCloud('productionOrders', productionOrders);
+    // После импорта заново отрисовываем карточку «Учёт хода линии» (иначе
+    // выпадающий список артикулов не подхватит только что загруженный план,
+    // пока пользователь сам не переключит селектор линии) и обзор линий.
+    if (typeof renderLineRunCard === 'function') { renderLineRunCard('lead'); renderLineRunCard('printer'); }
+    if (typeof renderLinesOverview === 'function') renderLinesOverview();
+    if (typeof renderColoristArticleOptions === 'function') renderColoristArticleOptions();
     const parts = [`добавлено заказов — ${added}`];
     if (duplicates) parts.push(`уже было в плане — ${duplicates}`);
     if (skipped) parts.push(`пропущено строк без артикула — ${skipped}`);
