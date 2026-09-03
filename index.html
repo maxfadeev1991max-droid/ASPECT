@@ -11940,13 +11940,16 @@ function renderDashboardView() {
   if (role === 'senior_printer') {
     sections.printer.classList.remove('hidden');
     renderPrelaunchChecklist();
-    renderLineRunCard('printer');
+    // passive: true — иначе просто открыв вкладку заново (без реальных
+    // изменений) мы стирали уже введённые скорость/остаток/артикул, которые
+    // человек ещё не успел сохранить кнопкой «Линия поехала».
+    renderLineRunCard('printer', true);
   } else if (role === 'shift_lead') {
     sections.lead.classList.remove('hidden');
     renderLinesOverview();
     renderLeadFourLines();
     renderColoristFourLines('dash-lead-colorist-four-lines');
-    renderLineRunCard('lead');
+    renderLineRunCard('lead', true);
   } else if (role === 'production_director' || role === 'shop_chief' || role === 'general_director') {
     sections.kpi.classList.remove('hidden');
     renderDirectorDashboard();
