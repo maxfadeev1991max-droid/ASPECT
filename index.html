@@ -3688,6 +3688,18 @@ async function sendPresenceHeartbeat() {
       presence = (r.presence || []).filter(p => p && p.name && (now - (p.ts || 0)) < PRESENCE_STALE_MS && p.name !== currentUserProfile.name);
       presence.push({ name: currentUserProfile.name, role: currentUserProfile.role, line: currentUserProfile.line || null, ts: now });
       r.presence = presence;
+      // Heartbeat идёт по своему независимому таймеру (раз в 30с) и может
+      // прочитать снимок базы за долю секунды до того, как туда долетит
+      // чей-то более свежий «Линия поехала»/импорт плана — а потом слепо
+      // отправить обратно СВОЙ (уже устаревший) вариант lineRuns/
+      // productionOrders поверх него, из-за чего активный забег линии
+      // «пропадает» примерно через 30-50с после старта. Локальные копии
+      // этих массивов обновляются обычным опросом раз в 2с — чаще, чем
+      // раз в 30с у heartbeat, — поэтому они заведомо не старее того, что
+      // heartbeat только что вычитал, и их безопасно подставить вместо
+      // прочитанного значения перед отправкой.
+      if (!lineRunsCloudSyncing) r.lineRuns = lineRuns;
+      if (!productionOrdersCloudSyncing) r.productionOrders = productionOrders;
       return presence;
     }, (r) => Array.isArray(r.presence) && r.presence.some(p => p && p.name === currentUserProfile.name && p.ts === now), 2);
     renderOnlineUsers(presence);
