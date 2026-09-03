@@ -3320,6 +3320,12 @@ async function fetchCloudSnapshot() {
 async function pushCloudSnapshot(record) {
   const cfg = sheetDbConfig || loadSheetDbConfig();
   if (!cfg || !cfg.url) return false;
+  // Каждая отправка в облако — независимо от того, откуда она вызвана —
+  // проходит через эту функцию, поэтому именно здесь подставляем самую
+  // свежую локальную копию lineRuns/productionOrders (см. подробное
+  // объяснение у pinFreshLocalFields ниже), а не полагаемся на то, что
+  // каждое из десятков мест кода не забудет сделать это само.
+  if (typeof pinFreshLocalFields === 'function') pinFreshLocalFields(record);
   const resp = await fetch(cfg.url, {
     method: 'POST',
     body: JSON.stringify({ action: 'put', payload: record })
@@ -3339,6 +3345,25 @@ async function pushCloudSnapshot(record) {
 // "исчезала", толком не дойдя до колориста. Эта обёртка после записи
 // перечитывает базу и проверяет, что изменение реально сохранилось; если
 // его затёрли — повторяет попытку с СВЕЖИМИ данными ещё раз.
+// ---- Защита от затирания lineRuns/productionOrders чужой синхронизацией ----
+// В приложении десятки мест (сохранение рецепта, заявка на краску, чат,
+// заявка на ремонт, presence-heartbeat и т.д.) читают ВСЮ запись из общей
+// базы, меняют своё поле и отправляют запись обратно целиком. Если такое
+// чтение случайно попадает на долю секунды раньше, чем в базу долетает
+// более свежий «Линия поехала» или импорт плана, эта чужая синхронизация
+// отправляет обратно устаревшую копию lineRuns/productionOrders — и активный
+// забег линии (или только что загрученный план) "пропадает" примерно через
+// 20-40с, когда обычный опрос подтягивает уже испорченные данные. Патчить
+// каждое место по отдельности ненадёжно — правим в одной точке, откуда
+// вообще уходит запись в облако: перед каждой отправкой подставляем самую
+// свежую ЛОКАЛЬНУЮ копию этих двух полей вместо того, что мог вычитать
+// конкретный вызов. Локальные копии обновляются обычным опросом раз в 2с —
+// гораздо чаще, чем работает любая из этих фоновых синхронизаций, — поэтому
+// они заведомо не старее прочитанного и их всегда безопасно подставить.
+function pinFreshLocalFields(remote) {
+  if (typeof lineRuns !== 'undefined' && !lineRunsCloudSyncing) remote.lineRuns = lineRuns;
+  if (typeof productionOrders !== 'undefined' && !productionOrdersCloudSyncing) remote.productionOrders = productionOrders;
+}
 const CLOUD_PUSH_SKIP = Symbol('cloud-push-skip');
 async function pushCloudSnapshotWithRetry(mutateFn, verifyFn, maxAttempts) {
   maxAttempts = maxAttempts || 4;
