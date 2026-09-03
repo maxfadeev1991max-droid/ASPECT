@@ -4449,6 +4449,7 @@ async function checkPaintAlertOnce() {
   const cfg = sheetDbConfig || loadSheetDbConfig();
   if (!cfg || !cfg.url) return;
   const ordersRevisionAtFetch = productionOrdersRevision;
+  const lineRunsRevisionAtFetch = lineRunsRevision;
   try {
     const remote = await fetchCloudSnapshot();
     if (remote) {
@@ -4484,8 +4485,21 @@ async function checkPaintAlertOnce() {
       shiftReports = Array.isArray(remote.shiftReports) ? remote.shiftReports : shiftReports;
       saveShiftReports(shiftReports);
       if (!lineRunsCloudSyncing) {
-        lineRuns = Array.isArray(remote.lineRuns) ? remote.lineRuns : lineRuns;
-        saveLineRuns(lineRuns);
+        const remoteLineRuns = Array.isArray(remote.lineRuns) ? remote.lineRuns : null;
+        // Не принимаем снимок, пока облако реально не подтвердило именно
+        // НАШИ последние изменения по каждому "ожидающему" id (см. пояснение
+        // у объявления lineRunsPendingCloudIds) — иначе только что начатый
+        // забег/новая скорость/остановка стирались бы обратно на пустую
+        // форму, стоило облаку хоть немного отстать с чтением.
+        const lineRunsPendingConfirmed = !lineRunsPendingCloudIds.size || (remoteLineRuns && [...lineRunsPendingCloudIds].every(id => {
+          const localRun = lineRuns.find(r => r.id === id);
+          return !localRun || isLineRunConfirmedByRemote(localRun, remoteLineRuns);
+        }));
+        if (lineRunsPendingConfirmed && lineRunsRevisionAtFetch === lineRunsRevision) {
+          lineRuns = remoteLineRuns || lineRuns;
+          lineRunsPendingCloudIds.clear();
+          saveLineRuns(lineRuns);
+        }
       }
       if (typeof renderAllLinesStatus === 'function') renderAllLinesStatus();
       const role = currentUserProfile && currentUserProfile.role;
@@ -11949,6 +11963,31 @@ let lineRuns = loadLineRuns();
 // эту отправку — иначе только что начатый забег «слетает» через пару
 // секунд (гонка между push и очередным poll).
 let lineRunsCloudSyncing = false;
+// Этого одного флага мало: он защищает только то время, пока НАША СОБСТВЕННАЯ
+// попытка записи ещё выполняется. А у Google Таблицы через Apps Script чтение
+// иногда ещё несколько десятков секунд после успешной записи возвращает
+// старые данные (см. комментарий у pushCloudSnapshotWithRetry). Как только
+// lineRunsCloudSyncing сбрасывается в false, обычный опрос раз в 2с снова
+// начинает слепо принимать то, что вернуло облако — и если оно всё ещё
+// "не видит" наш старт/остановку/новую скорость, только что сделанное
+// изменение стирается. lineRunsRevision + lineRunsPendingCloudIds — та же
+// защита, что уже есть у productionOrders: не принимаем снимок из облака,
+// пока он реально не подтвердит именно НАШЕ последнее изменение по каждому
+// id из "ожидающих" (а не просто наличие id — id мог быть в базе и ДО
+// изменения, например до нажатия «Артикул закончен»).
+let lineRunsRevision = 0;
+let lineRunsPendingCloudIds = new Set();
+function markLineRunPending(id) {
+  lineRunsRevision++;
+  lineRunsPendingCloudIds.add(id);
+}
+function isLineRunConfirmedByRemote(localRun, remoteRuns) {
+  const remoteRun = (remoteRuns || []).find(r => r.id === localRun.id);
+  if (!remoteRun) return false;
+  return remoteRun.endTs === localRun.endTs &&
+    remoteRun.speedMPerMin === localRun.speedMPerMin &&
+    remoteRun.offsetMeters === localRun.offsetMeters;
+}
 const BITRIX_CONFIG_KEY = 'colorist_bitrix_config';
 function loadBitrixConfig() {
   try { return JSON.parse(localStorage.getItem(BITRIX_CONFIG_KEY) || 'null') || {}; } catch (e) { return {}; }
@@ -12845,8 +12884,10 @@ function startLineRun(prefix) {
   const offsetMeters = !isNaN(offsetRolls) && offsetRolls > 0 ? Math.round(offsetRolls * METERS_PER_ROLL * 10) / 10 : 0;
   if (!article) { toast('Укажите артикул, который сейчас идёт на линии.'); return; }
   if (lineRuns.some(r => String(r.line) === line && !r.endTs)) { toast('На этой линии уже идёт учёт хода — сначала завершите текущий артикул.'); return; }
-  lineRuns.push({ id: 'lr' + Date.now(), line, article, startTs: Date.now(), endTs: null, speedMPerMin: isNaN(speed) ? null : speed, offsetMeters, meters: 0, rolls: 0, pallets: 0, createdBy: currentUserProfile.name, role: currentUserProfile.role });
+  const newRun = { id: 'lr' + Date.now(), line, article, startTs: Date.now(), endTs: null, speedMPerMin: isNaN(speed) ? null : speed, offsetMeters, meters: 0, rolls: 0, pallets: 0, createdBy: currentUserProfile.name, role: currentUserProfile.role };
+  lineRuns.push(newRun);
   saveLineRuns(lineRuns);
+  markLineRunPending(newRun.id);
   renderLineRunCard(prefix);
   lineRunsCloudSyncing = true;
   syncArrayToCloud('lineRuns', lineRuns).finally(() => { lineRunsCloudSyncing = false; });
@@ -12859,6 +12900,7 @@ function updateLineRunSpeed(prefix, id) {
   if (isNaN(val)) return;
   run.speedMPerMin = val;
   saveLineRuns(lineRuns);
+  markLineRunPending(id);
   renderLineRunCard(prefix);
   lineRunsCloudSyncing = true;
   syncArrayToCloud('lineRuns', lineRuns).finally(() => { lineRunsCloudSyncing = false; });
@@ -12873,6 +12915,7 @@ function stopLineRun(prefix, id) {
   run.rolls = Math.round(run.meters / METERS_PER_ROLL * 10) / 10;
   run.pallets = Math.round(run.rolls / ROLLS_PER_PALLET * 100) / 100;
   saveLineRuns(lineRuns);
+  markLineRunPending(id);
   lineRunsCloudSyncing = true;
   syncArrayToCloud('lineRuns', lineRuns).finally(() => { lineRunsCloudSyncing = false; });
   // Если в плане заказов есть подходящий (тот же артикул, та же или не
@@ -12885,6 +12928,12 @@ function stopLineRun(prefix, id) {
     if (target && order.producedQty >= target) order.status = 'done';
     else if (order.status === 'planned') order.status = 'in_progress';
     saveProductionOrders(productionOrders);
+    // Как и у lineRuns выше: это изменение существующего заказа (не новый
+    // id), поэтому одного productionOrdersPendingCloudIds (который проверяет
+    // только наличие id) недостаточно — отслеживаем и его тоже, чтобы опрос
+    // не стёр только что засчитанный метраж, пока облако его не подтвердит.
+    productionOrdersRevision++;
+    productionOrdersPendingCloudIds.add(order.id);
     syncArrayToCloud('productionOrders', productionOrders);
     orderNote = ' — засчитано в заказ «' + order.article + '»';
     if (typeof renderOrdersList === 'function') renderOrdersList();
