@@ -4390,6 +4390,7 @@ document.addEventListener('visibilitychange', () => {
 async function checkPaintAlertOnce() {
   const cfg = sheetDbConfig || loadSheetDbConfig();
   if (!cfg || !cfg.url) return;
+  const ordersRevisionAtFetch = productionOrdersRevision;
   try {
     const remote = await fetchCloudSnapshot();
     if (remote) {
@@ -4407,9 +4408,14 @@ async function checkPaintAlertOnce() {
       saveMaintRequests(maintRequests);
       renderAllMaintPanels();
       notifyNewMaintRequests();
-      productionOrders = Array.isArray(remote.productionOrders) ? remote.productionOrders : productionOrders;
-      saveProductionOrders(productionOrders);
-      if (typeof renderColoristArticleOptions === 'function') renderColoristArticleOptions();
+      // Не применяем план из ответа, который был запрошен до локального
+      // импорта, и не читаем план во время собственной записи в облако.
+      // Иначе старый снимок возвращает старый список артикулов.
+      if (!productionOrdersCloudSyncing && ordersRevisionAtFetch === productionOrdersRevision) {
+        productionOrders = Array.isArray(remote.productionOrders) ? remote.productionOrders : productionOrders;
+        saveProductionOrders(productionOrders);
+        if (typeof renderColoristArticleOptions === 'function') renderColoristArticleOptions();
+      }
       rawMaterials = Array.isArray(remote.rawMaterials) ? remote.rawMaterials : rawMaterials;
       saveRawMaterials(rawMaterials);
       plannedMaintenance = Array.isArray(remote.plannedMaintenance) ? remote.plannedMaintenance : plannedMaintenance;
@@ -11838,6 +11844,10 @@ function saveMaterialLedger(list) {
   try { localStorage.setItem(MATERIAL_LEDGER_KEY, JSON.stringify(list)); } catch (e) {}
 }
 let productionOrders = loadProductionOrders();
+// Версия локального плана нужна, чтобы ответ облачного опроса, начавшегося
+// до импорта, не смог затереть только что загруженные заказы.
+let productionOrdersRevision = 0;
+let productionOrdersCloudSyncing = false;
 let rawMaterials = loadRawMaterials();
 let plannedMaintenance = loadPlannedMaintenance();
 let materialLedger = loadMaterialLedger();
@@ -13168,7 +13178,15 @@ async function handleOrdersExcelImport(evt, statusElId) {
     }
     saveProductionOrders(productionOrders);
     renderOrdersList();
-    syncArrayToCloud('productionOrders', productionOrders);
+    // Меняем ревизию до первого await: уже выполняющийся старый облачный
+    // запрос после этого импорта больше не имеет права заменить наш план.
+    productionOrdersRevision++;
+    productionOrdersCloudSyncing = true;
+    try {
+      await syncArrayToCloud('productionOrders', productionOrders);
+    } finally {
+      productionOrdersCloudSyncing = false;
+    }
     // После импорта заново отрисовываем карточку «Учёт хода линии» (иначе
     // выпадающий список артикулов не подхватит только что загруженный план,
     // пока пользователь сам не переключит селектор линии) и обзор линий.
