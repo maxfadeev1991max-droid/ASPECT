@@ -14,6 +14,7 @@
   <title>AspectRu — цех производства</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -1374,9 +1375,26 @@
 
     <!-- Инфо -->
     <div class="space-y-3">
+        <div class="bg-gray-50 p-3 rounded-2xl border border-gray-100">
+          <label class="text-[9px] font-black text-gray-400 uppercase">Линия (для списка артикулов из плана)</label>
+          <select id="colorist-line" class="w-full bg-transparent font-black outline-none" onchange="renderColoristArticleOptions()">
+            <option value="">— не выбрана —</option>
+            <option value="1">Линия 1</option>
+            <option value="2">Линия 2</option>
+            <option value="3">Линия 3</option>
+            <option value="4">Линия 4</option>
+          </select>
+        </div>
         <div class="grid grid-cols-2 gap-3">
             <input type="text" id="name" placeholder="Название заказа" class="p-4 bg-gray-50 rounded-2xl outline-none font-bold text-sm border border-transparent focus:border-blue-300">
-            <input type="text" id="article" placeholder="Артикул" class="p-4 bg-gray-50 rounded-2xl outline-none font-bold text-sm border border-transparent focus:border-blue-300" onblur="autofillByArticle()">
+            <div class="relative">
+              <input type="text" id="article" list="colorist-article-datalist" placeholder="Артикул" autocomplete="off" class="w-full p-4 bg-gray-50 rounded-2xl outline-none font-bold text-sm border border-transparent focus:border-blue-300"
+                oninput="renderColoristArticleOptions()"
+                onfocus="renderColoristArticleOptions()"
+                onblur="setTimeout(function(){ var d=document.getElementById('colorist-article-dropdown'); if(d) d.classList.add('hidden'); autofillByArticle(); }, 200)">
+              <datalist id="colorist-article-datalist"></datalist>
+              <div id="colorist-article-dropdown" class="hidden absolute z-20 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto bg-white rounded-2xl shadow-lg border border-gray-100"></div>
+            </div>
         </div>
         <div class="grid grid-cols-2 gap-3">
             <input type="text" id="master-name" placeholder="Мастер (кто замешивал)" class="p-4 bg-gray-50 rounded-2xl outline-none font-bold text-sm border border-transparent focus:border-blue-300">
@@ -2214,10 +2232,22 @@
       <button onclick="submitPrelaunchChecklist()" class="w-full bg-emerald-600 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">✅ Сдать чек-лист</button>
       <div id="dash-checklist-log" class="space-y-1 pt-1"></div>
     </div>
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">🚦 Учёт хода линии</div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Нажмите «Линия поехала» в начале артикула и «Артикул закончен» в конце — метраж посчитается сам по введённой скорости (1 рул. = 10,05 м, 1 пал. = 96 рул.).</p>
+      <div id="dash-linerun-printer"></div>
+    </div>
     <div class="bg-slate-900 rounded-2xl p-4 space-y-2 text-white">
       <div class="text-[10px] font-black uppercase text-blue-300">🔧 Требуется ремонт</div>
       <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Опишите проблему — заявку увидят все, кто сейчас в приложении. Можно приложить фото с линии.</p>
       <textarea id="dash-maint-text-printer" rows="2" placeholder="Например: течёт масло из редуктора Ольбрихта, секция 2" class="w-full p-2.5 bg-white/10 rounded-xl outline-none text-[11px] font-bold resize-none placeholder:text-gray-400"></textarea>
+      <select id="dash-maint-category-printer" class="w-full p-2.5 bg-white/10 rounded-xl outline-none text-[10px] font-bold">
+        <option value="breakdown">🔧 Поломка оборудования</option>
+        <option value="material">📦 Нет сырья/материала</option>
+        <option value="setup">🎛 Наладка/переналадка</option>
+        <option value="defect">🚨 Из-за брака</option>
+        <option value="other" selected>❓ Другое</option>
+      </select>
       <div class="flex gap-2 items-center">
         <select id="dash-maint-urgency-printer" class="flex-1 p-2.5 bg-white/10 rounded-xl outline-none text-[10px] font-bold">
           <option value="low">🟢 Не срочно</option>
@@ -2239,13 +2269,41 @@
   <!-- Начальник смены -->
   <div id="dash-leadview-section" class="hidden space-y-4">
     <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">📥 Импорт плана из Excel</div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Тот же файл, что скидывают утром. Колонки находятся по названию сами.</p>
+      <input type="file" id="dash-orders-excel-input-lead" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleOrdersExcelImport(event,'dash-orders-import-status-lead')">
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="document.getElementById('dash-orders-excel-input-lead').click()" class="bg-emerald-600 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">📥 Загрузить файл</button>
+        <button onclick="clearProductionPlan()" class="bg-red-50 text-red-600 py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">🗑 Очистить план</button>
+      </div>
+      <div id="dash-orders-import-status-lead" class="text-[9px] text-gray-400"></div>
+    </div>
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
       <div class="text-[10px] font-black uppercase text-gray-500">🏭 Все линии сразу</div>
       <div id="dash-lines-overview" class="space-y-1.5"></div>
+    </div>
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">🚦 Учёт хода линии</div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Нажмите «Линия поехала» в начале артикула и «Артикул закончен» в конце — метраж посчитается сам по введённой скорости.</p>
+      <select id="dash-linerun-line-lead" onchange="renderLineRunCard('lead')" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold mb-1">
+        <option value="1">Линия 1</option>
+        <option value="2">Линия 2</option>
+        <option value="3">Линия 3</option>
+        <option value="4">Линия 4</option>
+      </select>
+      <div id="dash-linerun-lead"></div>
     </div>
     <div class="bg-slate-900 rounded-2xl p-4 space-y-2 text-white">
       <div class="text-[10px] font-black uppercase text-blue-300">🔧 Требуется ремонт</div>
       <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Опишите проблему — заявку увидят все, кто сейчас в приложении. Можно приложить фото.</p>
       <textarea id="dash-maint-text-lead" rows="2" placeholder="Например: течёт масло из редуктора Ольбрихта, секция 2" class="w-full p-2.5 bg-white/10 rounded-xl outline-none text-[11px] font-bold resize-none placeholder:text-gray-400"></textarea>
+      <select id="dash-maint-category-lead" class="w-full p-2.5 bg-white/10 rounded-xl outline-none text-[10px] font-bold">
+        <option value="breakdown">🔧 Поломка оборудования</option>
+        <option value="material">📦 Нет сырья/материала</option>
+        <option value="setup">🎛 Наладка/переналадка</option>
+        <option value="defect">🚨 Из-за брака</option>
+        <option value="other" selected>❓ Другое</option>
+      </select>
       <div class="flex gap-2 items-center">
         <select id="dash-maint-urgency-lead" class="flex-1 p-2.5 bg-white/10 rounded-xl outline-none text-[10px] font-bold">
           <option value="low">🟢 Не срочно</option>
@@ -2275,24 +2333,108 @@
 
   <!-- Производственный директор / начальник цеха / генеральный директор -->
   <div id="dash-kpi-section" class="hidden space-y-4">
+
+    <!-- 0. Импорт плана из Excel -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">📥 Импорт плана из Excel</div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Тот же файл, что скидывают утром. Колонки находятся по названию сами (артикул, метры/рулоны, линия, срок, срочно, экспорт).</p>
+      <input type="file" id="dash-orders-excel-input-kpi" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleOrdersExcelImport(event,'dash-orders-import-status-kpi')">
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="document.getElementById('dash-orders-excel-input-kpi').click()" class="bg-emerald-600 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">📥 Загрузить файл</button>
+        <button onclick="clearProductionPlan()" class="bg-red-50 text-red-600 py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">🗑 Очистить план</button>
+      </div>
+      <div id="dash-orders-import-status-kpi" class="text-[9px] text-gray-400"></div>
+    </div>
+
+    <!-- 0b. Интеграция с Bitrix24: сделки CRM -> план заказов -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">🔗 Bitrix24 — план из CRM-сделок</div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Одностороннее: сделки CRM Bitrix24 → план заказов в приложении. Обратно в Bitrix24 ничего не отправляется.</p>
+
+      <details class="bg-gray-50 rounded-xl p-2.5">
+        <summary class="text-[10px] font-black text-gray-600 cursor-pointer">📖 Как получить вебхук Bitrix24</summary>
+        <ol class="text-[9px] text-gray-500 leading-relaxed list-decimal pl-4 pt-1.5 space-y-0.5">
+          <li>В Bitrix24 откройте раздел «Разработчикам» (в поиске портала наберите «вебхук»).</li>
+          <li>Выберите «Другое» → «Входящий вебхук».</li>
+          <li>Отметьте права доступа минимум к разделу <b>CRM</b> и нажмите «Сохранить».</li>
+          <li>Bitrix24 покажет ссылку вида <span class="font-mono">https://ваш-портал.bitrix24.ru/rest/1/xxxxxxxxxxxxxxxx/</span> — скопируйте её целиком и вставьте ниже.</li>
+        </ol>
+      </details>
+
+      <input type="text" id="bitrix-webhook-input" placeholder="https://ваш-портал.bitrix24.ru/rest/1/xxxxxxxxxxxxxxxx/" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[10px] font-bold font-mono">
+      <button onclick="saveBitrixWebhook()" class="w-full bg-gray-800 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">💾 Сохранить вебхук</button>
+
+      <button onclick="bitrixShowFields()" class="w-full bg-gray-100 text-gray-700 py-2 rounded-xl font-black uppercase text-[9px] btn-active">🔍 Показать поля сделки Bitrix24</button>
+      <div id="bitrix-fields-list" class="text-[9px] text-gray-400"></div>
+
+      <div class="text-[9px] font-black uppercase text-gray-400 pt-1">Какое поле сделки за что отвечает</div>
+      <div class="grid grid-cols-2 gap-2">
+        <input type="text" id="bitrix-fieldArticle" placeholder="Артикул (напр. TITLE)" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[10px] font-bold font-mono">
+        <input type="text" id="bitrix-fieldLine" placeholder="Линия, код поля" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[10px] font-bold font-mono">
+        <input type="text" id="bitrix-fieldQty" placeholder="Кол-во, код поля" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[10px] font-bold font-mono">
+        <label class="flex items-center gap-1.5 px-2.5 py-2.5 bg-gray-50 rounded-xl text-[9px] font-bold"><input type="checkbox" id="bitrix-qtyInRolls" class="w-4 h-4">это рулоны</label>
+        <select id="bitrix-fieldDeadline" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[10px] font-bold col-span-2">
+          <option value="BEGINDATE">Срок = дата начала сделки (BEGINDATE)</option>
+          <option value="CLOSEDATE">Срок = дата закрытия сделки (CLOSEDATE)</option>
+        </select>
+        <input type="text" id="bitrix-stageFilter" placeholder="Фильтр по стадии (STAGE_ID), необязательно" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[10px] font-bold font-mono col-span-2">
+        <input type="text" id="bitrix-fieldPriority" placeholder="Срочность, код поля (необяз.)" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[10px] font-bold font-mono">
+        <input type="text" id="bitrix-priorityValue" placeholder="Значение = срочно (необяз.)" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[10px] font-bold">
+        <input type="text" id="bitrix-fieldExport" placeholder="Экспорт, код поля (необяз.)" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[10px] font-bold font-mono">
+        <input type="text" id="bitrix-exportValue" placeholder="Значение = экспорт (необяз.)" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[10px] font-bold">
+      </div>
+      <button onclick="saveBitrixMapping()" class="w-full bg-gray-800 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">💾 Сохранить настройки полей</button>
+
+      <label class="flex items-center gap-2 px-1 pt-1 text-[9px] font-bold text-gray-500"><input type="checkbox" id="bitrix-autosync-toggle" onchange="toggleBitrixAutoSync()" class="w-4 h-4">Автосинхронизация каждые 5 минут</label>
+      <button onclick="bitrixSyncOrders(true)" class="w-full bg-blue-600 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">🔄 Синхронизировать сейчас</button>
+      <div id="bitrix-sync-status" class="text-[9px] text-gray-400"></div>
+    </div>
+
+    <!-- 1. Выполнение плана по линиям и коллекциям/дизайнам -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">🎯 Выполнение плана</div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">По данным плана заказов (вкладка Мастера УПП) и отметок «сдано, м». Заводится вручную — точность зависит от того, насколько аккуратно вносится факт.</p>
+      <div class="text-[9px] font-black uppercase text-gray-400 pt-1">По линиям</div>
+      <div id="dash-director-plan-lines" class="space-y-1.5"></div>
+      <div class="text-[9px] font-black uppercase text-gray-400 pt-2">По коллекциям / артикулам</div>
+      <div id="dash-director-plan-articles" class="space-y-1.5"></div>
+    </div>
+
+    <!-- 1b. Итоги смен от начальников смен (выкатка рулонов, брак) -->
     <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
       <div class="flex items-center justify-between">
-        <div class="text-[10px] font-black uppercase text-gray-500">📈 Брак по причинам</div>
-        <select id="dash-kpi-period" onchange="renderKpiDashboard()" class="text-[10px] p-2 bg-gray-50 rounded-xl outline-none font-bold">
+        <h3 class="text-sm font-black text-gray-800 uppercase">📋 Итоги смен</h3>
+        <select id="dash-shiftreports-period" onchange="renderShiftReportsCard()" class="text-[10px] p-2 bg-gray-50 rounded-xl outline-none font-bold">
           <option value="1">За сутки</option>
           <option value="7" selected>За 7 дней</option>
           <option value="30">За 30 дней</option>
         </select>
       </div>
-      <div id="dash-kpi-summary" class="text-[10px] text-gray-500"></div>
-      <div id="dash-kpi-by-section" class="space-y-1.5 pt-1"></div>
-      <div class="text-[9px] font-black uppercase text-gray-400 pt-2">По типу дефекта</div>
-      <div id="dash-kpi-by-type" class="space-y-1.5"></div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Выкатка рулонов и брак, которые начальник смены вносит при закрытии смены (вкладка «Производство»).</p>
+      <div id="dash-shiftreports-summary" class="text-[10px] text-gray-500"></div>
+      <div id="dash-shiftreports-list" class="space-y-1.5"></div>
+    </div>
+
+    <!-- 2. Текущие простои -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-black text-gray-800 uppercase">⏸ Текущие простои</h3>
+        <span id="dash-kpi-maint-open-count" class="text-[9px] font-black text-red-600"></span>
+      </div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Открытые заявки «требуется ремонт» — с причиной, автором и временем простоя.</p>
+      <div id="dash-kpi-maint-list" class="space-y-2"></div>
     </div>
     <div class="bg-slate-900 rounded-2xl p-4 space-y-2 text-white">
-      <div class="text-[10px] font-black uppercase text-blue-300">🔧 Требуется ремонт</div>
-      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Опишите проблему — заявку увидят все, кто сейчас в приложении. Можно приложить фото.</p>
+      <div class="text-[10px] font-black uppercase text-blue-300">🔧 Сообщить о простое / поломке</div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Опишите проблему — увидят все, кто сейчас в приложении. Можно приложить фото.</p>
       <textarea id="dash-maint-text-kpi" rows="2" placeholder="Например: течёт масло из редуктора Ольбрихта, секция 2" class="w-full p-2.5 bg-white/10 rounded-xl outline-none text-[11px] font-bold resize-none placeholder:text-gray-400"></textarea>
+      <select id="dash-maint-category-kpi" class="w-full p-2.5 bg-white/10 rounded-xl outline-none text-[10px] font-bold">
+        <option value="breakdown">🔧 Поломка оборудования</option>
+        <option value="material">📦 Нет сырья/материала</option>
+        <option value="setup">🎛 Наладка/переналадка</option>
+        <option value="defect">🚨 Из-за брака</option>
+        <option value="other" selected>❓ Другое</option>
+      </select>
       <div class="flex gap-2 items-center">
         <select id="dash-maint-urgency-kpi" class="flex-1 p-2.5 bg-white/10 rounded-xl outline-none text-[10px] font-bold">
           <option value="low">🟢 Не срочно</option>
@@ -2305,12 +2447,127 @@
       <div id="dash-maint-photo-preview-kpi" class="hidden"></div>
       <button id="dash-maint-submit-kpi" onclick="submitMaintenanceRequest('kpi')" class="w-full bg-blue-600 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">📨 Отправить заявку</button>
     </div>
-    <div class="space-y-2">
+
+    <!-- 3. Текущий брак -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <h3 class="text-sm font-black text-gray-800 uppercase">🚨 Текущий брак</h3>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Последние срабатывания видео-контроля брака на этом устройстве. Нажмите на фото — увидите полный кадр с обведённым местом и причиной.</p>
+      <div id="dash-director-defects-list" class="space-y-1.5"></div>
+    </div>
+
+    <!-- 4. Важные заказы (срочные/экспортные) -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <h3 class="text-sm font-black text-gray-800 uppercase">🚚 Важные заказы</h3>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Срочные и экспортные заказы из плана — статус и срок.</p>
+      <div id="dash-director-important-orders" class="space-y-1.5"></div>
+    </div>
+
+    <!-- 5. Загрузка линий на 24-48 часов -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <h3 class="text-sm font-black text-gray-800 uppercase">🗓 Загрузка линий на 24–48 часов</h3>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Заказы из плана со сроком в ближайшие двое суток, по линиям.</p>
+      <div id="dash-director-line-load" class="space-y-1.5"></div>
+    </div>
+
+    <!-- 6. % брака по сменам, линиям, дизайнам -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
       <div class="flex items-center justify-between">
-        <h3 class="text-sm font-black text-gray-800 uppercase">🔧 Открытые заявки на ремонт</h3>
-        <span id="dash-kpi-maint-open-count" class="text-[9px] font-black text-red-600"></span>
+        <div class="text-[10px] font-black uppercase text-gray-500">📈 Брак — разбивка</div>
+        <select id="dash-kpi-period" onchange="renderKpiDashboard()" class="text-[10px] p-2 bg-gray-50 rounded-xl outline-none font-bold">
+          <option value="1">За сутки</option>
+          <option value="7" selected>За 7 дней</option>
+          <option value="30">За 30 дней</option>
+        </select>
       </div>
-      <div id="dash-kpi-maint-list" class="space-y-2"></div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Только по данным видео-контроля брака, накопленным на этом устройстве.</p>
+      <div id="dash-kpi-summary" class="text-[10px] text-gray-500"></div>
+      <div class="text-[9px] font-black uppercase text-gray-400 pt-2">По причине (участку)</div>
+      <div id="dash-kpi-by-section" class="space-y-1.5"></div>
+      <div class="text-[9px] font-black uppercase text-gray-400 pt-2">По типу дефекта</div>
+      <div id="dash-kpi-by-type" class="space-y-1.5"></div>
+      <div class="text-[9px] font-black uppercase text-gray-400 pt-2">По линии</div>
+      <div id="dash-kpi-by-line" class="space-y-1.5"></div>
+      <div class="text-[9px] font-black uppercase text-gray-400 pt-2">По дизайну/артикулу</div>
+      <div id="dash-kpi-by-design" class="space-y-1.5"></div>
+      <div class="text-[9px] font-black uppercase text-gray-400 pt-2">По смене (день 06–18 / ночь 18–06)</div>
+      <div id="dash-kpi-by-shift" class="space-y-1.5"></div>
+    </div>
+
+    <!-- 7. Повторяющиеся проблемы -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <h3 class="text-sm font-black text-gray-800 uppercase">🔁 Повторяющиеся проблемы</h3>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Один и тот же тип брака на одном артикуле, замеченный в 3+ разных дня за выбранный период выше.</p>
+      <div id="dash-director-recurring" class="space-y-1.5"></div>
+    </div>
+
+    <!-- 8. История простоев -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-black text-gray-800 uppercase">🕒 История простоев</h3>
+        <select id="dash-downtime-period" onchange="renderDowntimeHistory()" class="text-[10px] p-2 bg-gray-50 rounded-xl outline-none font-bold">
+          <option value="1">За сутки</option>
+          <option value="7" selected>За 7 дней</option>
+          <option value="30">За 30 дней</option>
+        </select>
+      </div>
+      <div id="dash-downtime-summary" class="text-[10px] text-gray-500"></div>
+      <div id="dash-downtime-history-list" class="space-y-1.5"></div>
+    </div>
+
+    <!-- 9. Плановое vs внеплановое ТО -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <h3 class="text-sm font-black text-gray-800 uppercase">🛠 ТО: плановое vs внеплановое</h3>
+      <div id="dash-maint-plan-summary" class="text-[10px] text-gray-500"></div>
+      <div class="grid grid-cols-2 gap-2 pt-1">
+        <input type="text" id="dash-planmaint-line" placeholder="Линия" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+        <input type="date" id="dash-planmaint-date" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+      </div>
+      <input type="text" id="dash-planmaint-title" placeholder="Что делаем (напр. замена ножей смотки)" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+      <button onclick="addPlannedMaintenance()" class="w-full bg-gray-800 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">➕ Запланировать ТО</button>
+      <div id="dash-planned-maint-list" class="space-y-1.5 pt-1"></div>
+    </div>
+
+    <!-- 10. OEE -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-black text-gray-800 uppercase">⚙️ OEE (упрощённый расчёт)</h3>
+        <select id="dash-oee-period" onchange="renderOeeCard()" class="text-[10px] p-2 bg-gray-50 rounded-xl outline-none font-bold">
+          <option value="1">За сутки</option>
+          <option value="7" selected>За 7 дней</option>
+          <option value="30">За 30 дней</option>
+        </select>
+      </div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">В приложении нет датчиков скорости линии, поэтому «Производительность» — это факт/план по сданным метрам заказов, а не реальная скорость. Доступность и Качество считаются по реальным данным (простои и брак).</p>
+      <div id="dash-oee-body" class="space-y-2"></div>
+    </div>
+
+    <!-- 11. Сырьё: критические остатки -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <h3 class="text-sm font-black text-gray-800 uppercase">📦 Критические остатки сырья</h3>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Остатки вводятся вручную (авто-учёта склада в приложении нет). Красным — ниже критического порога.</p>
+      <div id="dash-materials-list" class="space-y-1.5"></div>
+      <div class="grid grid-cols-2 gap-2 pt-1">
+        <input type="text" id="dash-material-name" placeholder="Название (напр. Основа флизелин)" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold col-span-2">
+        <input type="number" id="dash-material-qty" placeholder="Остаток" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+        <input type="text" id="dash-material-unit" placeholder="Ед. (кг/м/рулон)" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+        <input type="number" id="dash-material-critical" placeholder="Критический порог" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold col-span-2">
+      </div>
+      <button onclick="addRawMaterial()" class="w-full bg-gray-800 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">➕ Добавить позицию</button>
+    </div>
+
+    <!-- 12. Расход материалов: факт vs норма -->
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <h3 class="text-sm font-black text-gray-800 uppercase">💰 Расход основы и краски: факт vs норма</h3>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Ручной журнал для контроля себестоимости — приложение не считает расход автоматически (нет учёта метража/навески по партии), поэтому норму и факт нужно вносить самим по итогам смены/партии заказа.</p>
+      <div id="dash-ledger-list" class="space-y-1.5"></div>
+      <input type="text" id="dash-ledger-article" placeholder="Артикул / коллекция" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+      <div class="grid grid-cols-2 gap-2">
+        <input type="number" id="dash-ledger-norm-base" placeholder="Норма основы, кг" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+        <input type="number" id="dash-ledger-fact-base" placeholder="Факт основы, кг" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+        <input type="number" id="dash-ledger-norm-paint" placeholder="Норма краски, кг" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+        <input type="number" id="dash-ledger-fact-paint" placeholder="Факт краски, кг" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+      </div>
+      <button onclick="addMaterialLedgerEntry()" class="w-full bg-gray-800 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">➕ Записать</button>
     </div>
   </div>
 
@@ -2320,6 +2577,13 @@
       <div class="text-[10px] font-black uppercase text-blue-300">🔧 Требуется ремонт</div>
       <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Опишите проблему — заявку увидят все, кто сейчас в приложении. Можно приложить фото.</p>
       <textarea id="dash-maint-text-colorist" rows="2" placeholder="Например: течёт масло из редуктора Ольбрихта, секция 2" class="w-full p-2.5 bg-white/10 rounded-xl outline-none text-[11px] font-bold resize-none placeholder:text-gray-400"></textarea>
+      <select id="dash-maint-category-colorist" class="w-full p-2.5 bg-white/10 rounded-xl outline-none text-[10px] font-bold">
+        <option value="breakdown">🔧 Поломка оборудования</option>
+        <option value="material">📦 Нет сырья/материала</option>
+        <option value="setup">🎛 Наладка/переналадка</option>
+        <option value="defect">🚨 Из-за брака</option>
+        <option value="other" selected>❓ Другое</option>
+      </select>
       <div class="flex gap-2 items-center">
         <select id="dash-maint-urgency-colorist" class="flex-1 p-2.5 bg-white/10 rounded-xl outline-none text-[10px] font-bold">
           <option value="low">🟢 Не срочно</option>
@@ -2340,13 +2604,30 @@
 
   <!-- Мастер УПП -->
   <div id="dash-orders-section" class="hidden space-y-4">
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">📥 Импорт плана из Excel</div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Загрузите тот же файл, что скидывают утром. Приложение само найдёт колонки по названию — подходят любые заголовки, где есть слова «артикул», «метр/кол-во/рулон», «линия», «срок/дата», «срочно», «экспорт». Метры и рулоны в колонке распознаются автоматически (рулон переводится в метры: 1 рул. = 10,05 м).</p>
+      <input type="file" id="dash-orders-excel-input" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleOrdersExcelImport(event,'dash-orders-import-status')">
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="document.getElementById('dash-orders-excel-input').click()" class="bg-emerald-600 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">📥 Загрузить файл</button>
+        <button onclick="clearProductionPlan()" class="bg-red-50 text-red-600 py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">🗑 Очистить план</button>
+      </div>
+      <div id="dash-orders-import-status" class="text-[9px] text-gray-400"></div>
+    </div>
     <div class="bg-slate-900 rounded-2xl p-4 space-y-2 text-white">
-      <div class="text-[10px] font-black uppercase text-blue-300">🗓 Новый заказ в план</div>
+      <div class="text-[10px] font-black uppercase text-blue-300">🗓 Добавить заказ вручную</div>
       <div class="grid grid-cols-2 gap-2">
         <input type="text" id="dash-order-article" placeholder="Артикул" class="p-2.5 bg-white/10 rounded-xl outline-none text-[11px] font-bold placeholder:text-gray-400">
         <input type="text" id="dash-order-qty" placeholder="Кол-во, м" class="p-2.5 bg-white/10 rounded-xl outline-none text-[11px] font-bold placeholder:text-gray-400">
         <input type="date" id="dash-order-deadline" class="p-2.5 bg-white/10 rounded-xl outline-none text-[11px] font-bold">
         <input type="text" id="dash-order-line" placeholder="Линия" class="p-2.5 bg-white/10 rounded-xl outline-none text-[11px] font-bold placeholder:text-gray-400">
+      </div>
+      <div class="flex gap-2 items-center">
+        <select id="dash-order-priority" class="flex-1 p-2.5 bg-white/10 rounded-xl outline-none text-[10px] font-bold">
+          <option value="normal" selected>Обычный приоритет</option>
+          <option value="urgent">🔴 Срочный</option>
+        </select>
+        <label class="flex items-center gap-1.5 px-2.5 py-2.5 bg-white/10 rounded-xl text-[10px] font-bold shrink-0"><input type="checkbox" id="dash-order-export" class="w-4 h-4 accent-violet-500">🌍 Экспорт</label>
       </div>
       <button onclick="addProductionOrder()" class="w-full bg-blue-600 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">➕ Добавить в план</button>
     </div>
@@ -2997,8 +3278,16 @@ async function fetchCloudSnapshot() {
     deletedRecipeIds: data.deletedRecipeIds || [],
     chat: data.chat || [],
     paintAlert: data.paintAlert || null,
+    testPaintAlert: data.testPaintAlert || null,
+    testPaintAlerts: Array.isArray(data.testPaintAlerts) ? data.testPaintAlerts : (data.testPaintAlert ? [data.testPaintAlert] : []),
+    coloristLocks: data.coloristLocks || {},
     paintRequests: Array.isArray(data.paintRequests) ? data.paintRequests : [],
     maintRequests: Array.isArray(data.maintRequests) ? data.maintRequests : [],
+    productionOrders: Array.isArray(data.productionOrders) ? data.productionOrders : [],
+    rawMaterials: Array.isArray(data.rawMaterials) ? data.rawMaterials : [],
+    plannedMaintenance: Array.isArray(data.plannedMaintenance) ? data.plannedMaintenance : [],
+    shiftReports: Array.isArray(data.shiftReports) ? data.shiftReports : [],
+    lineRuns: Array.isArray(data.lineRuns) ? data.lineRuns : [],
     baseMultipliers: data.baseMultipliers || {},
     lotMultipliers: data.lotMultipliers || {},
     pigmentLotMultipliers: data.pigmentLotMultipliers || {}
@@ -3027,6 +3316,7 @@ async function pushCloudSnapshot(record) {
 // "исчезала", толком не дойдя до колориста. Эта обёртка после записи
 // перечитывает базу и проверяет, что изменение реально сохранилось; если
 // его затёрли — повторяет попытку с СВЕЖИМИ данными ещё раз.
+const CLOUD_PUSH_SKIP = Symbol('cloud-push-skip');
 async function pushCloudSnapshotWithRetry(mutateFn, verifyFn, maxAttempts) {
   maxAttempts = maxAttempts || 4;
   let lastRemote = null;
@@ -3034,6 +3324,7 @@ async function pushCloudSnapshotWithRetry(mutateFn, verifyFn, maxAttempts) {
     const remote = await fetchCloudSnapshot();
     if (!remote) throw new Error('Нет ответа от таблицы');
     const result = mutateFn(remote);
+    if (result === CLOUD_PUSH_SKIP) return { remote, result: null, skipped: true };
     await pushCloudSnapshot(remote);
     lastRemote = remote;
     if (!verifyFn) return { remote, result };
@@ -3549,7 +3840,7 @@ async function pushToSheetDb() {
   try {
     let remote = null;
     try { remote = await fetchCloudSnapshot(); } catch (e) { /* если не удалось подтянуть — всё равно отправим локальные, лучше так чем ничего */ }
-    if (!remote) remote = { recipes: [], presence: [], deletedRecipeIds: [], chat: [], paintAlert: null, paintRequests: [], baseMultipliers: {}, lotMultipliers: {}, pigmentLotMultipliers: {} };
+    if (!remote) remote = { recipes: [], presence: [], deletedRecipeIds: [], chat: [], paintAlert: null, testPaintAlert: null, paintRequests: [], baseMultipliers: {}, lotMultipliers: {}, pigmentLotMultipliers: {} };
     const localList = await getAllLocalRecipes();
     const merged = mergeRecipeLists(remote.recipes, localList, remote.deletedRecipeIds);
     remote.recipes = merged;
@@ -3956,7 +4247,7 @@ function chatInputKeydown(event) {
 // новую отметку не старше 2 минут, показывают полноэкранную плашку на
 // оставшееся до истечения 2 минут время — так все устройства гаснут
 // одновременно, даже если кто-то увидел уведомление на полминуты позже.
-const PAINT_ALERT_DURATION_MS = 2 * 60 * 1000;
+const PAINT_ALERT_DURATION_MS = 10 * 60 * 1000;
 const PAINT_ALERT_LAST_SHOWN_KEY = 'colorist_paint_alert_last_shown';
 const TEST_PAINT_ALERT_LAST_SHOWN_KEY = 'colorist_test_paint_alert_last_shown';
 let paintAlertPollTimer = null;
@@ -4027,8 +4318,15 @@ async function announceTestPaintPoured(line) {
   const alertObj = { ts: Date.now(), name: currentUserProfile.name, line: line || null };
   try {
     await pushCloudSnapshotWithRetry(
-      (remote) => { remote.testPaintAlert = alertObj; return alertObj; },
-      (remote) => !!remote.testPaintAlert && remote.testPaintAlert.ts === alertObj.ts
+      (remote) => {
+        const history = Array.isArray(remote.testPaintAlerts) ? remote.testPaintAlerts : (remote.testPaintAlert ? [remote.testPaintAlert] : []);
+        remote.testPaintAlerts = [...history.filter(a => a && a.ts !== alertObj.ts), alertObj].slice(-30);
+        remote.testPaintAlert = alertObj;
+        return alertObj;
+      },
+      (remote) => Array.isArray(remote.testPaintAlerts)
+        ? remote.testPaintAlerts.some(a => a && a.ts === alertObj.ts)
+        : !!remote.testPaintAlert && remote.testPaintAlert.ts === alertObj.ts
     );
     toast('✅ Отправлено — линия ' + line + ': печатник этой линии и начальник смены увидят «Тестовая краска налита» на весь экран');
   } catch (e) {
@@ -4087,7 +4385,8 @@ async function checkPaintAlertOnce() {
     const remote = await fetchCloudSnapshot();
     if (remote) {
       applyIncomingPaintAlert(remote.paintAlert || null);
-      applyIncomingTestPaintAlert(remote.testPaintAlert || null);
+      applyIncomingTestPaintAlerts(remote.testPaintAlerts);
+      if (!Array.isArray(remote.testPaintAlerts)) applyIncomingTestPaintAlert(remote.testPaintAlert || null);
       paintRequests = remote.paintRequests || [];
       coloristLocks = remote.coloristLocks || {};
       renderPaintRequestsSection();
@@ -4099,8 +4398,42 @@ async function checkPaintAlertOnce() {
       saveMaintRequests(maintRequests);
       renderAllMaintPanels();
       notifyNewMaintRequests();
+      productionOrders = Array.isArray(remote.productionOrders) ? remote.productionOrders : productionOrders;
+      saveProductionOrders(productionOrders);
+      if (typeof renderColoristArticleOptions === 'function') renderColoristArticleOptions();
+      rawMaterials = Array.isArray(remote.rawMaterials) ? remote.rawMaterials : rawMaterials;
+      saveRawMaterials(rawMaterials);
+      plannedMaintenance = Array.isArray(remote.plannedMaintenance) ? remote.plannedMaintenance : plannedMaintenance;
+      savePlannedMaintenance(plannedMaintenance);
+      shiftReports = Array.isArray(remote.shiftReports) ? remote.shiftReports : shiftReports;
+      saveShiftReports(shiftReports);
+      lineRuns = Array.isArray(remote.lineRuns) ? remote.lineRuns : lineRuns;
+      saveLineRuns(lineRuns);
+      const role = currentUserProfile && currentUserProfile.role;
+      if (role === 'upp_master') renderOrdersList();
+      if (role === 'senior_printer') renderLineRunCard('printer');
+      if (role === 'shift_lead') renderLineRunCard('lead');
+      if ((role === 'production_director' || role === 'shop_chief' || role === 'general_director') && document.getElementById('view-dashboard') && !document.getElementById('view-dashboard').classList.contains('hidden')) {
+        renderDirectorDashboard();
+      }
     }
   } catch (e) { /* тихо игнорируем — повторим на следующем цикле опроса */ }
+}
+// Фоновая отправка локального массива целиком в общую базу (последняя запись
+// побеждает — как и остальная синхронизация в этом файле). Используется для
+// заказов / сырья / планового ТО, которые раньше вообще не покидали
+// localStorage конкретного устройства.
+async function syncArrayToCloud(field, localArray) {
+  const cfg = sheetDbConfig || loadSheetDbConfig();
+  if (!cfg || !cfg.url) return false;
+  try {
+    const snapshotJson = JSON.stringify(localArray);
+    await pushCloudSnapshotWithRetry(
+      (remote) => { remote[field] = localArray; return true; },
+      (remote) => JSON.stringify(remote[field] || []) === snapshotJson
+    );
+    return true;
+  } catch (e) { console.error(e); return false; }
 }
 // Уведомление (звук + системный Notification, если разрешён) колористу/
 // начальнику смены о КАЖДОЙ новой заявке "нужна краска", как только она
@@ -4223,22 +4556,35 @@ async function acquireColoristLock(line) {
   if (!canStartColoristLock()) { toast('Начать внесение может только колорист, начальник смены или мастер УПП.'); return; }
   const cfg = sheetDbConfig || loadSheetDbConfig();
   if (!cfg || !cfg.url) { toast('Подключите общую базу (☁️ в шапке) — иначе блокировка не будет видна печатнику.'); return; }
+  const myName = currentUserProfile.name, myRole = currentUserProfile.role;
+  let blockedBy = null;
   try {
-    const remote = await fetchCloudSnapshot();
-    if (!remote) throw new Error('Нет ответа от таблицы');
-    remote.coloristLocks = remote.coloristLocks || {};
-    const existing = remote.coloristLocks[line];
-    if (existing && existing.active && existing.byName !== currentUserProfile.name) {
-      toast('⚠️ Линию ' + line + ' уже ведёт ' + existing.byName + ' — сначала уточните у коллеги.');
-      coloristLocks = remote.coloristLocks;
-      renderColoristLockUI();
-      return;
-    }
-    remote.coloristLocks[line] = { active: true, byName: currentUserProfile.name, byRole: currentUserProfile.role, ts: Date.now() };
-    await pushCloudSnapshot(remote);
-    coloristLocks = remote.coloristLocks;
+    const outcome = await pushCloudSnapshotWithRetry(
+      (remote) => {
+        remote.coloristLocks = remote.coloristLocks || {};
+        const existing = remote.coloristLocks[line];
+        if (existing && existing.active && existing.byName !== myName) {
+          blockedBy = existing.byName;
+          return CLOUD_PUSH_SKIP;
+        }
+        blockedBy = null;
+        remote.coloristLocks[line] = { active: true, byName: myName, byRole: myRole, ts: Date.now() };
+        return true;
+      },
+      (remote) => {
+        const lock = remote.coloristLocks && remote.coloristLocks[line];
+        return !!(lock && lock.active && lock.byName === myName);
+      }
+    );
+    coloristLocks = outcome.remote.coloristLocks || {};
     renderColoristLockUI();
-    toast('🔒 Внесение по линии ' + line + ' начато — печатник этой линии временно не сможет менять данные.');
+    if (blockedBy) {
+      toast('⚠️ Линию ' + line + ' уже ведёт ' + blockedBy + ' — сначала уточните у коллеги.');
+    } else if (outcome.unverified) {
+      toast('⚠️ Не удалось точно подтвердить блокировку (кто-то ещё пишет в базу одновременно) — проверьте на экране печатника, сработало ли, и повторите при необходимости.');
+    } else {
+      toast('🔒 Внесение по линии ' + line + ' начато — печатник этой линии временно не сможет менять данные.');
+    }
   } catch (e) {
     console.error(e);
     toast('Не удалось поставить блокировку — проверьте интернет.');
@@ -4249,14 +4595,21 @@ async function releaseColoristLock(line) {
   const cfg = sheetDbConfig || loadSheetDbConfig();
   if (!cfg || !cfg.url) return;
   try {
-    const remote = await fetchCloudSnapshot();
-    if (!remote) throw new Error('Нет ответа от таблицы');
-    remote.coloristLocks = remote.coloristLocks || {};
-    remote.coloristLocks[line] = { active: false };
-    await pushCloudSnapshot(remote);
-    coloristLocks = remote.coloristLocks;
+    const outcome = await pushCloudSnapshotWithRetry(
+      (remote) => {
+        remote.coloristLocks = remote.coloristLocks || {};
+        remote.coloristLocks[line] = { active: false };
+        return true;
+      },
+      (remote) => !(remote.coloristLocks && remote.coloristLocks[line] && remote.coloristLocks[line].active)
+    );
+    coloristLocks = outcome.remote.coloristLocks || {};
     renderColoristLockUI();
-    toast('🔓 Линия ' + line + ' освобождена.');
+    if (outcome.unverified) {
+      toast('⚠️ Не удалось точно подтвердить снятие блокировки — проверьте ещё раз.');
+    } else {
+      toast('🔓 Линия ' + line + ' освобождена.');
+    }
   } catch (e) {
     console.error(e);
     toast('Не удалось снять блокировку — проверьте интернет.');
@@ -4678,7 +5031,7 @@ function checkOverdueRequests() {
 }
 function applyIncomingPaintAlert(alert) {
   const role = currentUserProfile && currentUserProfile.role;
-  if (role !== 'shift_lead' && role !== 'senior_printer') return;
+  if (role !== 'shift_lead' && role !== 'senior_printer' && role !== 'upp_master') return;
   if (!alert || !alert.ts) return;
   if (alert.ts <= shownPaintAlertTs) return; // это уведомление уже показывали на этом устройстве
   // Печатник видит только оповещения со своей линии (выбранной при входе в
@@ -4716,7 +5069,7 @@ function hidePaintAlert() {
 }
 function applyIncomingTestPaintAlert(alert) {
   const role = currentUserProfile && currentUserProfile.role;
-  if (role !== 'shift_lead' && role !== 'senior_printer') return;
+  if (role !== 'shift_lead' && role !== 'senior_printer' && role !== 'upp_master') return;
   if (!alert || !alert.ts) return;
   if (alert.ts <= shownTestPaintAlertTs) return; // это уведомление уже показывали на этом устройстве
   if (role === 'senior_printer' && currentUserProfile.line && alert.line && String(alert.line) !== String(currentUserProfile.line)) {
@@ -4729,6 +5082,10 @@ function applyIncomingTestPaintAlert(alert) {
   saveShownTestPaintAlertTs(shownTestPaintAlertTs);
   if (elapsed < 0 || elapsed >= PAINT_ALERT_DURATION_MS) return;
   showTestPaintAlert(alert, PAINT_ALERT_DURATION_MS - elapsed);
+}
+function applyIncomingTestPaintAlerts(alerts) {
+  if (!Array.isArray(alerts)) return;
+  alerts.slice().sort((a, b) => (a.ts || 0) - (b.ts || 0)).forEach(applyIncomingTestPaintAlert);
 }
 function showTestPaintAlert(alert, remainingMs) {
   const panel = document.getElementById('test-paint-poured-alert');
@@ -10935,6 +11292,7 @@ async function logVisionDefect(grid, b) {
     row: b.cell.row, col: b.cell.col,
     tag: tag.trim() || null,
     meter: visionRollMeter,
+    line: (currentUserProfile && currentUserProfile.line) || null,
     thumb: cropVisionThumb(b.cell),
     full: captureVisionFullFrame(),
     // box — координаты найденной клетки в системе процесс-кадра (grid.procW x
@@ -10975,6 +11333,7 @@ async function logVisionStripe(grid, row, colsSet) {
     row, col: null,
     tag: tag.trim() || null,
     meter: visionRollMeter,
+    line: (currentUserProfile && currentUserProfile.line) || null,
     thumb: cropVisionRowThumb(grid, row),
     full: captureVisionFullFrame(),
     box: { x0: 0, y0: Math.floor(row * cellH), x1: grid.procW, y1: Math.ceil((row + 1) * cellH), procW: grid.procW, procH: grid.procH },
@@ -11433,7 +11792,74 @@ function loadProductionOrders() {
 }
 function saveProductionOrders(list) {
   try { localStorage.setItem(PRODUCTION_ORDERS_KEY, JSON.stringify(list)); } catch (e) {}
+  // Как только план (загруженное задание) обновился — обновляем список
+  // артикулов в даталисте на вкладке «Колорист», если там уже выбрана линия.
+  if (typeof renderColoristArticleOptions === 'function') renderColoristArticleOptions();
+  // Карточка «Учёт хода линии» тоже строит поле артикула динамически.
+  // Перерисовываем её, если задание загрузили уже после открытия панели.
+  if (currentUserProfile && typeof renderLineRunCard === 'function') {
+    if (currentUserProfile.role === 'senior_printer') renderLineRunCard('printer');
+    if (currentUserProfile.role === 'shift_lead') renderLineRunCard('lead');
+  }
 }
+const RAW_MATERIALS_KEY = 'colorist_raw_materials';
+const PLANNED_MAINT_KEY = 'colorist_planned_maintenance';
+const MATERIAL_LEDGER_KEY = 'colorist_material_ledger';
+function loadRawMaterials() {
+  try { return JSON.parse(localStorage.getItem(RAW_MATERIALS_KEY) || '[]'); } catch (e) { return []; }
+}
+function saveRawMaterials(list) {
+  try { localStorage.setItem(RAW_MATERIALS_KEY, JSON.stringify(list)); } catch (e) {}
+}
+function loadPlannedMaintenance() {
+  try { return JSON.parse(localStorage.getItem(PLANNED_MAINT_KEY) || '[]'); } catch (e) { return []; }
+}
+function savePlannedMaintenance(list) {
+  try { localStorage.setItem(PLANNED_MAINT_KEY, JSON.stringify(list)); } catch (e) {}
+}
+// Ручной журнал расхода сырья (факт/норма) — вводится директором/мастером
+// УПП по артикулу за период. Полноценного авто-учёта расхода тут нет (в
+// приложении не фиксируется метраж/навеска на партию), поэтому это именно
+// ручной журнал для контроля себестоимости, а не автоматический расчёт.
+function loadMaterialLedger() {
+  try { return JSON.parse(localStorage.getItem(MATERIAL_LEDGER_KEY) || '[]'); } catch (e) { return []; }
+}
+function saveMaterialLedger(list) {
+  try { localStorage.setItem(MATERIAL_LEDGER_KEY, JSON.stringify(list)); } catch (e) {}
+}
+let productionOrders = loadProductionOrders();
+let rawMaterials = loadRawMaterials();
+let plannedMaintenance = loadPlannedMaintenance();
+let materialLedger = loadMaterialLedger();
+const PROD_LINES_LIST = [1, 2, 3, 4];
+// Технологические константы пересчёта — сообщены директором:
+// 1 рулон = 10,05 м; 1 паллета = 96 рулонов (= 964,8 м).
+const METERS_PER_ROLL = 10.05;
+const ROLLS_PER_PALLET = 96;
+const METERS_PER_PALLET = Math.round(METERS_PER_ROLL * ROLLS_PER_PALLET * 100) / 100;
+const SHIFT_REPORTS_KEY = 'colorist_shift_reports';
+const LINE_RUNS_KEY = 'colorist_line_runs';
+function loadShiftReports() {
+  try { return JSON.parse(localStorage.getItem(SHIFT_REPORTS_KEY) || '[]'); } catch (e) { return []; }
+}
+function saveShiftReports(list) {
+  try { localStorage.setItem(SHIFT_REPORTS_KEY, JSON.stringify(list)); } catch (e) {}
+}
+function loadLineRuns() {
+  try { return JSON.parse(localStorage.getItem(LINE_RUNS_KEY) || '[]'); } catch (e) { return []; }
+}
+function saveLineRuns(list) {
+  try { localStorage.setItem(LINE_RUNS_KEY, JSON.stringify(list)); } catch (e) {}
+}
+let shiftReports = loadShiftReports();
+let lineRuns = loadLineRuns();
+const BITRIX_CONFIG_KEY = 'colorist_bitrix_config';
+function loadBitrixConfig() {
+  try { return JSON.parse(localStorage.getItem(BITRIX_CONFIG_KEY) || 'null') || {}; } catch (e) { return {}; }
+}
+function saveBitrixConfig(cfg) { try { localStorage.setItem(BITRIX_CONFIG_KEY, JSON.stringify(cfg)); } catch (e) {} }
+let bitrixConfig = loadBitrixConfig();
+let bitrixAutoSyncTimer = null;
 
 // Точка входа: показывает только тот блок(и), что относится к роли текущего
 // пользователя, и наполняет его данными.
@@ -11454,12 +11880,14 @@ function renderDashboardView() {
   if (role === 'senior_printer') {
     sections.printer.classList.remove('hidden');
     renderPrelaunchChecklist();
+    renderLineRunCard('printer');
   } else if (role === 'shift_lead') {
     sections.lead.classList.remove('hidden');
     renderLinesOverview();
+    renderLineRunCard('lead');
   } else if (role === 'production_director' || role === 'shop_chief' || role === 'general_director') {
     sections.kpi.classList.remove('hidden');
-    renderKpiDashboard();
+    renderDirectorDashboard();
   } else if (role === 'upp_master') {
     sections.orders.classList.remove('hidden');
     renderOrdersList();
@@ -11533,12 +11961,14 @@ async function submitMaintenanceRequest(prefix) {
   if (!text) { toast('Опишите проблему.'); return; }
   const urgencyEl = document.getElementById('dash-maint-urgency-' + prefix);
   const urgency = (urgencyEl && urgencyEl.value) || 'medium';
+  const categoryEl = document.getElementById('dash-maint-category-' + prefix);
+  const category = (categoryEl && categoryEl.value) || 'other';
   const btn = document.getElementById('dash-maint-submit-' + prefix);
   if (btn) btn.disabled = true;
   const req = {
     id: 'mr' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
     ts: Date.now(), name: currentUserProfile.name, role: currentUserProfile.role, line: currentUserProfile.line || null,
-    text, urgency, photo: dashMaintPhotoData[prefix] || null, status: 'open'
+    text, urgency, category, photo: dashMaintPhotoData[prefix] || null, status: 'open', resolvedTs: null
   };
   // Показываем заявку в своём списке сразу, не дожидаясь ответа облака —
   // и не теряем её, если общая база вообще не подключена.
@@ -11578,6 +12008,8 @@ async function submitMaintenanceRequest(prefix) {
 function maintUrgencyLabel(u) {
   return u === 'high' ? '🔴 Срочно' : (u === 'low' ? '🟢 Не срочно' : '🟡 В течение смены');
 }
+const MAINT_CATEGORY_LABELS = { breakdown: '🔧 Поломка оборудования', material: '📦 Нет сырья/материала', setup: '🎛 Наладка/переналадка', defect: '🚨 Из-за брака', other: '❓ Другое' };
+function maintCategoryLabel(c) { return MAINT_CATEGORY_LABELS[c] || MAINT_CATEGORY_LABELS.other; }
 function renderMyMaintList(elId) {
   const el = document.getElementById(elId);
   if (!el || !currentUserProfile) return;
@@ -11585,23 +12017,28 @@ function renderMyMaintList(elId) {
   el.innerHTML = mine.length ? mine.map(maintRequestCardHtml).join('') : '<p class="text-gray-400 text-center py-4 text-xs">Заявок пока нет</p>';
 }
 function maintRequestCardHtml(r) {
+  const duration = r.status === 'open' ? (Date.now() - r.ts) : (r.resolvedTs ? r.resolvedTs - r.ts : null);
   return `<div class="bg-white border border-gray-100 rounded-2xl p-3 flex gap-2 items-start">
     ${r.photo ? `<img src="${r.photo}" class="w-12 h-12 rounded-xl object-cover border border-gray-200 shrink-0">` : ''}
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-1.5 flex-wrap mb-0.5">
         <span class="text-[8px] font-black uppercase ${r.status === 'open' ? 'text-red-600' : 'text-emerald-600'}">${r.status === 'open' ? 'Открыта' : 'Закрыта'}</span>
         <span class="text-[8px] font-black">${maintUrgencyLabel(r.urgency)}</span>
+        <span class="text-[8px] font-bold text-gray-500">${maintCategoryLabel(r.category)}</span>
       </div>
       <div class="text-[11px] text-gray-700 font-bold">${escapeHtmlProd(r.text)}</div>
       <div class="text-[9px] text-gray-400 mt-0.5">${escapeHtmlProd(r.name)}${r.role ? ' · ' + roleShortLabel(r.role) : ''}${r.line ? ', линия ' + escapeHtmlProd(r.line) : ''} · ${new Date(r.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+      ${duration != null ? `<div class="text-[9px] font-black ${r.status === 'open' ? 'text-red-500' : 'text-gray-400'} mt-0.5">${r.status === 'open' ? '⏱ простаивает: ' : '⏱ длилось: '}${formatDurationMs(duration)}</div>` : ''}
     </div>
     ${r.status === 'open' ? `<button onclick="resolveMaintRequest('${r.id}')" class="text-[9px] bg-emerald-50 text-emerald-700 px-2 py-1.5 rounded-xl font-black shrink-0">✔️</button>` : ''}
   </div>`;
 }
 async function resolveMaintRequest(id) {
-  maintRequests = maintRequests.map(r => r.id === id ? { ...r, status: 'closed' } : r);
+  const resolvedTs = Date.now();
+  maintRequests = maintRequests.map(r => r.id === id ? { ...r, status: 'closed', resolvedTs } : r);
   saveMaintRequests(maintRequests);
   renderAllMaintPanels();
+  if (typeof renderDirectorDashboard === 'function' && currentUserProfile && ['production_director', 'shop_chief', 'general_director'].includes(currentUserProfile.role)) renderDirectorDashboard();
   const cfg = sheetDbConfig || loadSheetDbConfig();
   if (!cfg || !cfg.url) return;
   try {
@@ -11609,7 +12046,7 @@ async function resolveMaintRequest(id) {
       (remote) => {
         remote.maintRequests = Array.isArray(remote.maintRequests) ? remote.maintRequests : [];
         const idx = remote.maintRequests.findIndex(r => r.id === id);
-        if (idx >= 0) remote.maintRequests[idx] = { ...remote.maintRequests[idx], status: 'closed' };
+        if (idx >= 0) remote.maintRequests[idx] = { ...remote.maintRequests[idx], status: 'closed', resolvedTs };
         return null;
       },
       (remote) => Array.isArray(remote.maintRequests) && remote.maintRequests.some(r => r.id === id && r.status === 'closed')
@@ -11720,37 +12157,59 @@ function sectionFromDefectCause(type) {
   if (cause.indexOf('основ') !== -1) return 'Подготовка основы';
   return 'Не определено';
 }
+let directorDefectsAllCache = [];
+let directorDefectsPeriodCache = [];
 async function renderKpiDashboard() {
   const summaryEl = document.getElementById('dash-kpi-summary');
   const bySectionEl = document.getElementById('dash-kpi-by-section');
   const byTypeEl = document.getElementById('dash-kpi-by-type');
+  const byLineEl = document.getElementById('dash-kpi-by-line');
+  const byDesignEl = document.getElementById('dash-kpi-by-design');
+  const byShiftEl = document.getElementById('dash-kpi-by-shift');
   if (!summaryEl) return;
   const periodDays = parseInt((document.getElementById('dash-kpi-period') || {}).value || '7', 10);
   const since = Date.now() - periodDays * 24 * 3600000;
   const all = await getAllVisionDefects();
+  visionDefectLogCache = all;
+  directorDefectsAllCache = all;
   const period = all.filter(d => d.ts >= since && !d.falsePositive);
+  directorDefectsPeriodCache = period;
   if (!period.length) {
-    summaryEl.textContent = 'За выбранный период брак не зафиксирован (или контроль брака не использовался).';
-    bySectionEl.innerHTML = ''; byTypeEl.innerHTML = '';
+    summaryEl.textContent = 'За выбранный период брак не зафиксирован (или контроль брака не использовался на этом устройстве).';
+    [bySectionEl, byTypeEl, byLineEl, byDesignEl, byShiftEl].forEach(el => { if (el) el.innerHTML = ''; });
+    renderDirectorRecurring();
     return;
   }
-  summaryEl.textContent = `Всего зафиксировано: ${period.length} случаев брака за ${periodDays === 1 ? 'сутки' : periodDays + ' дней'}.`;
+  summaryEl.textContent = `Всего зафиксировано: ${period.length} случаев брака за ${periodDays === 1 ? 'сутки' : periodDays + ' дней'} (данные видео-контроля с этого устройства).`;
 
   const bySection = {};
   const byType = {};
+  const byLine = {};
+  const byDesign = {};
+  const byShift = { '☀️ День (06–18)': 0, '🌙 Ночь (18–06)': 0 };
   period.forEach(d => {
     const sec = sectionFromDefectCause(d.type);
     bySection[sec] = (bySection[sec] || 0) + 1;
     byType[d.type] = (byType[d.type] || 0) + 1;
+    const lineKey = d.line ? 'Линия ' + d.line : 'Линия не указана';
+    byLine[lineKey] = (byLine[lineKey] || 0) + 1;
+    const designKey = d.tag ? d.tag : 'Без артикула';
+    byDesign[designKey] = (byDesign[designKey] || 0) + 1;
+    const hour = new Date(d.ts).getHours();
+    const shiftKey = (hour >= 6 && hour < 18) ? '☀️ День (06–18)' : '🌙 Ночь (18–06)';
+    byShift[shiftKey]++;
   });
-  const maxSection = Math.max(...Object.values(bySection));
-  bySectionEl.innerHTML = Object.keys(bySection).sort((a, b) => bySection[b] - bySection[a]).map(sec => `
-    <div class="space-y-0.5">
-      <div class="flex justify-between text-[10px] font-bold text-gray-600"><span>${sec}</span><span>${bySection[sec]}</span></div>
-      <div class="h-2 bg-gray-100 rounded-full overflow-hidden"><div class="h-full bg-rose-500 rounded-full" style="width:${Math.round(bySection[sec] / maxSection * 100)}%"></div></div>
-    </div>`).join('');
-
-  const maxType = Math.max(...Object.values(byType));
+  const bar = (obj, el, color) => {
+    if (!el) return;
+    const max = Math.max(...Object.values(obj), 1);
+    el.innerHTML = Object.keys(obj).sort((a, b) => obj[b] - obj[a]).slice(0, 12).map(k => `
+      <div class="space-y-0.5">
+        <div class="flex justify-between text-[10px] font-bold text-gray-600"><span>${escapeHtmlProd(k)}</span><span>${obj[k]}</span></div>
+        <div class="h-2 bg-gray-100 rounded-full overflow-hidden"><div class="h-full bg-${color}-500 rounded-full" style="width:${Math.round(obj[k] / max * 100)}%"></div></div>
+      </div>`).join('');
+  };
+  bar(bySection, bySectionEl, 'rose');
+  const maxType = Math.max(...Object.values(byType), 1);
   byTypeEl.innerHTML = Object.keys(byType).sort((a, b) => byType[b] - byType[a]).map(t => {
     const info = VISION_TYPE_INFO[t] || { label: t };
     return `<div class="space-y-0.5">
@@ -11758,48 +12217,1009 @@ async function renderKpiDashboard() {
       <div class="h-2 bg-gray-100 rounded-full overflow-hidden"><div class="h-full bg-amber-500 rounded-full" style="width:${Math.round(byType[t] / maxType * 100)}%"></div></div>
     </div>`;
   }).join('');
+  bar(byLine, byLineEl, 'blue');
+  bar(byDesign, byDesignEl, 'violet');
+  bar(byShift, byShiftEl, 'emerald');
+  renderDirectorRecurring();
+}
+
+function renderDirectorRecurring() {
+  const el = document.getElementById('dash-director-recurring');
+  if (!el) return;
+  const period = directorDefectsPeriodCache || [];
+  const groups = {};
+  period.forEach(d => {
+    const key = (d.type || '?') + '||' + (d.tag || 'без артикула');
+    const day = new Date(d.ts).toDateString();
+    if (!groups[key]) groups[key] = { days: new Set(), count: 0 };
+    groups[key].days.add(day);
+    groups[key].count++;
+  });
+  const recurring = Object.keys(groups).filter(k => groups[k].days.size >= 3).sort((a, b) => groups[b].days.size - groups[a].days.size);
+  if (!recurring.length) { el.innerHTML = '<p class="text-gray-400 text-center py-3 text-xs">За выбранный период (см. фильтр выше) повторяющихся проблем не выявлено</p>'; return; }
+  el.innerHTML = recurring.map(k => {
+    const [type, tag] = k.split('||');
+    const info = VISION_TYPE_INFO[type] || { label: type, icon: '' };
+    const g = groups[k];
+    return `<div class="bg-amber-50 border border-amber-100 rounded-2xl p-2.5">
+      <div class="text-[10px] font-black text-amber-800">${info.icon || ''} ${info.label} — «${escapeHtmlProd(tag)}»</div>
+      <div class="text-[9px] text-amber-600 mt-0.5">Замечено в ${g.days.size} разных дней, всего ${g.count} раз(а) за период</div>
+    </div>`;
+  }).join('');
+}
+
+// ---------- Директор: итоги смен (выкатка рулонов, брак) ----------
+function renderShiftReportsCard() {
+  const summaryEl = document.getElementById('dash-shiftreports-summary');
+  const listEl = document.getElementById('dash-shiftreports-list');
+  if (!summaryEl || !listEl) return;
+  const periodDays = parseInt((document.getElementById('dash-shiftreports-period') || {}).value || '7', 10);
+  const since = Date.now() - periodDays * 24 * 3600000;
+  const period = shiftReports.filter(r => r.ts >= since).sort((a, b) => b.ts - a.ts);
+  if (!period.length) {
+    summaryEl.textContent = 'За выбранный период начальники смен ещё не вносили итоги (заполняется при закрытии смены на вкладке «Производство»).';
+    listEl.innerHTML = '';
+    return;
+  }
+  const totalMeters = period.reduce((s, r) => s + (r.meters || 0), 0);
+  const totalDefect = period.reduce((s, r) => s + (r.defectMeters || 0), 0);
+  const totalRolls = period.reduce((s, r) => s + (r.rollsProduced || 0), 0);
+  const avgDefectPct = totalMeters > 0 ? Math.round(totalDefect / totalMeters * 1000) / 10 : null;
+  summaryEl.innerHTML = `Смен с отчётом: <b>${period.length}</b>. Сдано всего: <b>${Math.round(totalMeters)} м</b> (${Math.round(totalRolls)} рул., ${Math.round(totalRolls / ROLLS_PER_PALLET * 10) / 10} пал.).<br>Брак: <b>${Math.round(totalDefect)} м</b>${avgDefectPct != null ? ' · <b>' + avgDefectPct + '%</b>' : ''}.`;
+  listEl.innerHTML = period.slice(0, 20).map(r => `
+    <div class="bg-gray-50 rounded-2xl p-2.5 flex items-center justify-between gap-2">
+      <div class="min-w-0">
+        <div class="text-[10px] font-black text-gray-700">${r.line ? 'Линия ' + escapeHtmlProd(r.line) + ' · ' : ''}${r.rollsProduced != null ? r.rollsProduced + ' рул. (' + Math.round(r.meters) + ' м)' : '—'}</div>
+        <div class="text-[9px] text-gray-400">${escapeHtmlProd(r.createdBy || '—')} · ${new Date(r.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>
+      </div>
+      ${r.defectPercent != null ? `<span class="text-[10px] font-black shrink-0 ${r.defectPercent > 3 ? 'text-red-600' : 'text-emerald-600'}">${r.defectPercent}% брак</span>` : ''}
+    </div>`).join('');
+}
+
+// ---------- Директор: выполнение плана по линиям/коллекциям ----------
+function renderDirectorPlanExecution() {
+  const linesEl = document.getElementById('dash-director-plan-lines');
+  const articlesEl = document.getElementById('dash-director-plan-articles');
+  if (!linesEl || !articlesEl) return;
+  if (!productionOrders.length) {
+    linesEl.innerHTML = '<p class="text-gray-400 text-center py-3 text-xs">План пуст — заказы добавляются во вкладке Мастера УПП</p>';
+    articlesEl.innerHTML = '';
+    return;
+  }
+  const groupBy = (keyFn) => {
+    const map = {};
+    productionOrders.forEach(o => {
+      const key = keyFn(o) || '—';
+      if (!map[key]) map[key] = { target: 0, done: 0, hasTarget: false };
+      const t = parseFloat(o.qty);
+      if (t) { map[key].target += t; map[key].hasTarget = true; }
+      map[key].done += (o.producedQty || 0);
+    });
+    return map;
+  };
+  const renderGroup = (map) => Object.keys(map).sort().map(key => {
+    const g = map[key];
+    const pct = g.hasTarget && g.target ? Math.min(100, Math.round(g.done / g.target * 100)) : null;
+    return `<div class="space-y-0.5">
+      <div class="flex justify-between text-[10px] font-bold text-gray-600"><span>${escapeHtmlProd(key)}</span><span>${Math.round(g.done * 10) / 10}${g.hasTarget ? ' / ' + g.target + ' м' : ' м сдано'}${pct != null ? ' · ' + pct + '%' : ''}</span></div>
+      ${pct != null ? `<div class="h-2 bg-gray-100 rounded-full overflow-hidden"><div class="h-full ${pct >= 100 ? 'bg-emerald-500' : 'bg-blue-500'} rounded-full" style="width:${pct}%"></div></div>` : ''}
+    </div>`;
+  }).join('');
+  const lineMap = groupBy(o => o.line ? 'Линия ' + o.line : null);
+  linesEl.innerHTML = renderGroup(lineMap) || '<p class="text-gray-400 text-center py-3 text-xs">Ни у одного заказа не указана линия</p>';
+  articlesEl.innerHTML = renderGroup(groupBy(o => o.article)) || '<p class="text-gray-400 text-center py-3 text-xs">—</p>';
+}
+
+// ---------- Директор: текущий брак (последние срабатывания на этом устройстве) ----------
+async function renderDirectorDefectsList() {
+  const el = document.getElementById('dash-director-defects-list');
+  if (!el) return;
+  const all = directorDefectsAllCache.length ? directorDefectsAllCache : await getAllVisionDefects();
+  visionDefectLogCache = all;
+  const list = all.filter(d => !d.falsePositive).slice(0, 15);
+  el.innerHTML = list.length ? list.map(d => {
+    const info = VISION_TYPE_INFO[d.type] || VISION_TYPE_INFO.stain;
+    const time = new Date(d.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return `<div class="flex items-center gap-2 bg-gray-50 rounded-2xl p-2">
+      ${d.thumb ? `<img src="${d.thumb}" onclick="openVisionDefectPhoto(${JSON.stringify(d.id)})" class="w-12 h-12 rounded-xl object-cover border border-gray-200 shrink-0 cursor-pointer active:opacity-70" title="Нажмите — полный кадр и причина">` : `<div class="w-12 h-12 rounded-xl bg-gray-200 shrink-0"></div>`}
+      <div class="flex-1 min-w-0">
+        <div class="text-[10px] font-black text-gray-700">${info.icon || ''} ${info.label} · серьёзность ${d.severity}</div>
+        <div class="text-[9px] text-gray-400">${time}${d.line ? ' · линия ' + escapeHtmlProd(String(d.line)) : ''}${d.tag ? ' · ' + escapeHtmlProd(d.tag) : ''}</div>
+      </div>
+    </div>`;
+  }).join('') : '<p class="text-gray-400 text-center py-3 text-xs">Брак не зафиксирован на этом устройстве (видео-контроль хранит данные локально на устройстве съёмки)</p>';
+}
+
+// ---------- Директор: важные заказы (срочные/экспортные) ----------
+function renderDirectorImportantOrders() {
+  const el = document.getElementById('dash-director-important-orders');
+  if (!el) return;
+  const list = productionOrders.filter(o => o.priority === 'urgent' || o.exportFlag).sort((a, b) => (a.deadline || '9999').localeCompare(b.deadline || '9999'));
+  el.innerHTML = list.length ? list.map(o => {
+    const target = parseFloat(o.qty);
+    const pct = target ? Math.min(100, Math.round((o.producedQty || 0) / target * 100)) : null;
+    return `<div class="bg-gray-50 rounded-2xl p-2.5">
+      <div class="text-[11px] font-black text-gray-800 flex items-center gap-1 flex-wrap">${escapeHtmlProd(o.article)} ${orderPriorityBadge(o)}</div>
+      <div class="text-[9px] text-gray-400 mt-0.5">${o.line ? 'линия ' + escapeHtmlProd(o.line) + ' · ' : ''}${o.deadline ? 'срок ' + o.deadline : 'срок не задан'} · ${ORDER_STATUS_LABELS[o.status] || o.status}${pct != null ? ' · ' + pct + '%' : ''}</div>
+    </div>`;
+  }).join('') : '<p class="text-gray-400 text-center py-3 text-xs">Срочных или экспортных заказов в плане сейчас нет</p>';
+}
+
+// ---------- Директор: загрузка линий на 24-48 часов ----------
+function renderDirectorLineLoad() {
+  const el = document.getElementById('dash-director-line-load');
+  if (!el) return;
+  const now = Date.now();
+  const in48h = now + 48 * 3600000;
+  const dueSoon = productionOrders.filter(o => {
+    if (!o.deadline || o.status === 'done') return false;
+    const d = new Date(o.deadline + 'T23:59:59').getTime();
+    return d >= now && d <= in48h;
+  });
+  if (!dueSoon.length) { el.innerHTML = '<p class="text-gray-400 text-center py-3 text-xs">На ближайшие 48 часов срочных сроков по плану нет</p>'; return; }
+  const byLine = {};
+  dueSoon.forEach(o => { const key = o.line ? 'Линия ' + o.line : 'Линия не указана'; (byLine[key] = byLine[key] || []).push(o); });
+  el.innerHTML = Object.keys(byLine).sort().map(line => `
+    <div class="bg-gray-50 rounded-2xl p-2.5">
+      <div class="text-[10px] font-black text-gray-700 mb-1">${line}</div>
+      ${byLine[line].map(o => `<div class="text-[10px] text-gray-600 flex justify-between gap-2"><span class="truncate">${escapeHtmlProd(o.article)}${orderPriorityBadge(o) ? ' ' + orderPriorityBadge(o) : ''}</span><span class="text-gray-400 shrink-0">до ${o.deadline}</span></div>`).join('')}
+    </div>`).join('');
+}
+
+// ---------- Директор: история простоев ----------
+function renderDowntimeHistory() {
+  const summaryEl = document.getElementById('dash-downtime-summary');
+  const listEl = document.getElementById('dash-downtime-history-list');
+  if (!summaryEl || !listEl) return;
+  const periodDays = parseInt((document.getElementById('dash-downtime-period') || {}).value || '7', 10);
+  const since = Date.now() - periodDays * 24 * 3600000;
+  const closed = maintRequests.filter(r => r.status === 'closed' && r.resolvedTs && r.ts >= since);
+  const openOnes = maintRequests.filter(r => r.status === 'open');
+  let totalMs = 0;
+  closed.forEach(r => { totalMs += (r.resolvedTs - r.ts); });
+  openOnes.forEach(r => { totalMs += (Date.now() - Math.max(r.ts, since)); });
+  const materialMs = maintRequests.filter(r => r.category === 'material').reduce((s, r) => {
+    if (r.status === 'open') return s + (Date.now() - Math.max(r.ts, since));
+    if (r.resolvedTs && r.ts >= since) return s + (r.resolvedTs - r.ts);
+    return s;
+  }, 0);
+  summaryEl.innerHTML = `Закрыто заявок за период: <b>${closed.length}</b>, открыто сейчас: <b>${openOnes.length}</b>.<br>Суммарный простой за период: <b>${formatDurationMs(totalMs)}</b>, из них из-за отсутствия сырья/материалов: <b>${formatDurationMs(materialMs)}</b>.`;
+  const combined = closed.concat(openOnes).sort((a, b) => b.ts - a.ts);
+  listEl.innerHTML = combined.length ? combined.slice(0, 30).map(maintRequestCardHtml).join('') : '<p class="text-gray-400 text-center py-3 text-xs">Простоев за период не было</p>';
+}
+
+// ---------- Директор: плановое / внеплановое ТО ----------
+function addPlannedMaintenance() {
+  const line = (document.getElementById('dash-planmaint-line').value || '').trim();
+  const title = (document.getElementById('dash-planmaint-title').value || '').trim();
+  const plannedDate = document.getElementById('dash-planmaint-date').value || '';
+  if (!title) { toast('Опишите, что за ТО планируется.'); return; }
+  plannedMaintenance.push({ id: 'pm' + Date.now(), line, title, plannedDate, createdTs: Date.now(), createdBy: currentUserProfile ? currentUserProfile.name : '', doneTs: null });
+  savePlannedMaintenance(plannedMaintenance);
+  ['dash-planmaint-line', 'dash-planmaint-title', 'dash-planmaint-date'].forEach(id => { const n = document.getElementById(id); if (n) n.value = ''; });
+  renderPlannedMaintenanceCard();
+  syncArrayToCloud('plannedMaintenance', plannedMaintenance);
+}
+function markPlannedMaintenanceDone(id) {
+  const item = plannedMaintenance.find(p => p.id === id);
+  if (item) item.doneTs = Date.now();
+  savePlannedMaintenance(plannedMaintenance);
+  renderPlannedMaintenanceCard();
+  syncArrayToCloud('plannedMaintenance', plannedMaintenance);
+}
+function deletePlannedMaintenance(id) {
+  plannedMaintenance = plannedMaintenance.filter(p => p.id !== id);
+  savePlannedMaintenance(plannedMaintenance);
+  renderPlannedMaintenanceCard();
+  syncArrayToCloud('plannedMaintenance', plannedMaintenance);
+}
+function renderPlannedMaintenanceCard() {
+  const summaryEl = document.getElementById('dash-maint-plan-summary');
+  const listEl = document.getElementById('dash-planned-maint-list');
+  if (!summaryEl || !listEl) return;
+  const since30 = Date.now() - 30 * 24 * 3600000;
+  const plannedDone = plannedMaintenance.filter(p => p.doneTs && p.doneTs >= since30).length;
+  const plannedPending = plannedMaintenance.filter(p => !p.doneTs).length;
+  const unplannedClosed = maintRequests.filter(r => r.status === 'closed' && r.resolvedTs && r.resolvedTs >= since30 && r.category === 'breakdown').length;
+  summaryEl.innerHTML = `За 30 дней: плановых ТО выполнено — <b>${plannedDone}</b>, запланировано и ещё не сделано — <b>${plannedPending}</b>, внеплановых ремонтов из-за поломок — <b>${unplannedClosed}</b>.`;
+  const sorted = plannedMaintenance.slice().sort((a, b) => (a.doneTs ? 1 : 0) - (b.doneTs ? 1 : 0) || (a.plannedDate || '').localeCompare(b.plannedDate || ''));
+  listEl.innerHTML = sorted.length ? sorted.map(p => `
+    <div class="flex items-center gap-2 bg-gray-50 rounded-2xl p-2.5">
+      <div class="flex-1 min-w-0">
+        <div class="text-[10px] font-black ${p.doneTs ? 'text-emerald-700 line-through' : 'text-gray-700'}">${escapeHtmlProd(p.title)}</div>
+        <div class="text-[9px] text-gray-400 mt-0.5">${p.line ? 'линия ' + escapeHtmlProd(p.line) + ' · ' : ''}${p.plannedDate ? 'на ' + p.plannedDate : 'дата не задана'}${p.doneTs ? ' · выполнено ' + new Date(p.doneTs).toLocaleDateString('ru-RU') : ''}</div>
+      </div>
+      ${!p.doneTs ? `<button onclick="markPlannedMaintenanceDone('${p.id}')" class="text-[9px] bg-emerald-50 text-emerald-700 px-2 py-1.5 rounded-xl font-black shrink-0">✔️</button>` : ''}
+      <button onclick="deletePlannedMaintenance('${p.id}')" class="text-[9px] bg-red-50 text-red-600 px-2 py-1.5 rounded-xl font-black shrink-0">🗑</button>
+    </div>`).join('') : '<p class="text-gray-400 text-center py-3 text-xs">Плановых ТО пока не добавлено</p>';
+}
+
+// ---------- Директор: OEE (упрощённо, из доступных в приложении данных) ----------
+async function renderOeeCard() {
+  const el = document.getElementById('dash-oee-body');
+  if (!el) return;
+  const periodDays = parseInt((document.getElementById('dash-oee-period') || {}).value || '7', 10);
+  const since = Date.now() - periodDays * 24 * 3600000;
+
+  // Доступность: календарное время всех линий минус простои (открытые+закрытые заявки).
+  // Предполагаем круглосуточную работу линий — если это не так, доступность занижена.
+  const plannedTimeMs = periodDays * 24 * 3600000 * PROD_LINES_LIST.length;
+  const closedDown = maintRequests.filter(r => r.status === 'closed' && r.resolvedTs && r.ts >= since).reduce((s, r) => s + (r.resolvedTs - r.ts), 0);
+  const openDown = maintRequests.filter(r => r.status === 'open').reduce((s, r) => s + (Date.now() - Math.max(r.ts, since)), 0);
+  const downtimeMs = closedDown + openDown;
+  const availability = plannedTimeMs > 0 ? Math.max(0, Math.min(1, 1 - downtimeMs / plannedTimeMs)) : null;
+
+  // Производительность: факт/план по сданным метрам заказов (не скорость линии — датчиков нет).
+  const relevantOrders = productionOrders.filter(o => !o.deadline || new Date(o.deadline).getTime() >= since - 30 * 24 * 3600000);
+  const targetSum = relevantOrders.reduce((s, o) => s + (parseFloat(o.qty) || 0), 0);
+  const doneSum = relevantOrders.reduce((s, o) => s + (o.producedQty || 0), 0);
+  const performance = targetSum > 0 ? Math.max(0, Math.min(1, doneSum / targetSum)) : null;
+
+  // Качество: в приоритете — реальный брак в метрах из итогов смен
+  // (пункт 3, вносит начальник смены); если их нет за период — резервный
+  // расчёт через долю партий колориста без зафиксированного видео-браком.
+  const shiftReportsPeriod = shiftReports.filter(r => r.ts >= since);
+  const metersFromReports = shiftReportsPeriod.reduce((s, r) => s + (r.meters || 0), 0);
+  const defectFromReports = shiftReportsPeriod.reduce((s, r) => s + (r.defectMeters || 0), 0);
+  let quality = null;
+  let qualityNote = 'Мало данных для расчёта качества';
+  if (metersFromReports > 0) {
+    quality = Math.max(0, Math.min(1, 1 - defectFromReports / metersFromReports));
+    qualityNote = 'Брак, м / сдано, м — из итогов смен начальников смен';
+  } else {
+    const batches = await getAllProductionBatches();
+    const batchesInPeriod = batches.filter(b => b.id >= since).length;
+    const defectsInPeriod = (directorDefectsPeriodCache || []).length;
+    if (batchesInPeriod >= 5) {
+      quality = Math.max(0, Math.min(1, 1 - defectsInPeriod / batchesInPeriod));
+      qualityNote = 'Партии без зафиксированного видео-брака (данные этого устройства)';
+    }
+  }
+
+  const pct = (v) => v == null ? '—' : Math.round(v * 100) + '%';
+  const oee = (availability != null && performance != null && quality != null) ? availability * performance * quality : null;
+  const row = (label, val, note) => `<div class="flex items-center justify-between bg-gray-50 rounded-2xl px-3 py-2.5">
+    <div><div class="text-[10px] font-black text-gray-700">${label}</div><div class="text-[8px] text-gray-400">${note}</div></div>
+    <div class="text-lg font-black ${val == null ? 'text-gray-300' : 'text-gray-800'}">${pct(val)}</div>
+  </div>`;
+  el.innerHTML = row('Доступность', availability, 'Простои по заявкам на ремонт / календарное время линий') +
+    row('Производительность', performance, 'Сдано метров / план по заказам за период') +
+    row('Качество', quality, qualityNote) +
+    `<div class="flex items-center justify-between bg-slate-900 text-white rounded-2xl px-3 py-3 mt-1">
+      <div class="text-[11px] font-black uppercase">OEE</div>
+      <div class="text-2xl font-black">${pct(oee)}</div>
+    </div>`;
+}
+
+// ---------- Директор: критические остатки сырья ----------
+function addRawMaterial() {
+  const name = (document.getElementById('dash-material-name').value || '').trim();
+  const qty = parseFloat(document.getElementById('dash-material-qty').value);
+  const unit = (document.getElementById('dash-material-unit').value || '').trim() || 'кг';
+  const critical = parseFloat(document.getElementById('dash-material-critical').value);
+  if (!name || isNaN(qty)) { toast('Укажите название и остаток.'); return; }
+  rawMaterials.push({ id: 'rm' + Date.now(), name, qty, unit, critical: isNaN(critical) ? null : critical, updatedTs: Date.now(), updatedBy: currentUserProfile ? currentUserProfile.name : '' });
+  saveRawMaterials(rawMaterials);
+  ['dash-material-name', 'dash-material-qty', 'dash-material-unit', 'dash-material-critical'].forEach(id => { const n = document.getElementById(id); if (n) n.value = ''; });
+  renderRawMaterialsList();
+  syncArrayToCloud('rawMaterials', rawMaterials);
+}
+function updateRawMaterialQty(id) {
+  const item = rawMaterials.find(m => m.id === id);
+  if (!item) return;
+  const input = prompt(`Новый остаток «${item.name}», ${item.unit}:`, item.qty);
+  const val = parseFloat((input || '').replace(',', '.'));
+  if (isNaN(val)) return;
+  item.qty = val;
+  item.updatedTs = Date.now();
+  item.updatedBy = currentUserProfile ? currentUserProfile.name : '';
+  saveRawMaterials(rawMaterials);
+  renderRawMaterialsList();
+  syncArrayToCloud('rawMaterials', rawMaterials);
+}
+function deleteRawMaterial(id) {
+  rawMaterials = rawMaterials.filter(m => m.id !== id);
+  saveRawMaterials(rawMaterials);
+  renderRawMaterialsList();
+  syncArrayToCloud('rawMaterials', rawMaterials);
+}
+function renderRawMaterialsList() {
+  const el = document.getElementById('dash-materials-list');
+  if (!el) return;
+  const sorted = rawMaterials.slice().sort((a, b) => {
+    const aCrit = a.critical != null && a.qty <= a.critical, bCrit = b.critical != null && b.qty <= b.critical;
+    return (bCrit - aCrit) || a.name.localeCompare(b.name);
+  });
+  el.innerHTML = sorted.length ? sorted.map(m => {
+    const isCritical = m.critical != null && m.qty <= m.critical;
+    const isLow = m.critical != null && !isCritical && m.qty <= m.critical * 1.3;
+    return `<div class="flex items-center gap-2 rounded-2xl p-2.5 ${isCritical ? 'bg-red-50 border border-red-100' : (isLow ? 'bg-amber-50 border border-amber-100' : 'bg-gray-50')}">
+      <div class="flex-1 min-w-0">
+        <div class="text-[10px] font-black ${isCritical ? 'text-red-700' : 'text-gray-700'}">${isCritical ? '🔴' : (isLow ? '🟡' : '🟢')} ${escapeHtmlProd(m.name)}</div>
+        <div class="text-[9px] text-gray-400 mt-0.5">${m.qty} ${escapeHtmlProd(m.unit)}${m.critical != null ? ' · порог ' + m.critical + ' ' + escapeHtmlProd(m.unit) : ''} · обновил ${escapeHtmlProd(m.updatedBy || '—')}, ${new Date(m.updatedTs).toLocaleDateString('ru-RU')}</div>
+      </div>
+      <button onclick="updateRawMaterialQty('${m.id}')" class="text-[9px] bg-blue-50 text-blue-700 px-2.5 py-1.5 rounded-xl font-black shrink-0">✏️</button>
+      <button onclick="deleteRawMaterial('${m.id}')" class="text-[9px] bg-red-50 text-red-600 px-2 py-1.5 rounded-xl font-black shrink-0">🗑</button>
+    </div>`;
+  }).join('') : '<p class="text-gray-400 text-center py-3 text-xs">Позиций пока нет — добавьте основные материалы ниже</p>';
+}
+
+// ---------- Директор: факт/норма расхода основы и краски (ручной журнал) ----------
+function addMaterialLedgerEntry() {
+  const article = (document.getElementById('dash-ledger-article').value || '').trim();
+  const normBase = parseFloat(document.getElementById('dash-ledger-norm-base').value);
+  const factBase = parseFloat(document.getElementById('dash-ledger-fact-base').value);
+  const normPaint = parseFloat(document.getElementById('dash-ledger-norm-paint').value);
+  const factPaint = parseFloat(document.getElementById('dash-ledger-fact-paint').value);
+  if (!article) { toast('Укажите артикул/коллекцию.'); return; }
+  materialLedger.push({ id: 'ml' + Date.now(), ts: Date.now(), article, normBase: isNaN(normBase) ? null : normBase, factBase: isNaN(factBase) ? null : factBase, normPaint: isNaN(normPaint) ? null : normPaint, factPaint: isNaN(factPaint) ? null : factPaint, createdBy: currentUserProfile ? currentUserProfile.name : '' });
+  saveMaterialLedger(materialLedger);
+  ['dash-ledger-article', 'dash-ledger-norm-base', 'dash-ledger-fact-base', 'dash-ledger-norm-paint', 'dash-ledger-fact-paint'].forEach(id => { const n = document.getElementById(id); if (n) n.value = ''; });
+  renderMaterialLedgerList();
+}
+function deleteMaterialLedgerEntry(id) {
+  materialLedger = materialLedger.filter(m => m.id !== id);
+  saveMaterialLedger(materialLedger);
+  renderMaterialLedgerList();
+}
+function ledgerVarianceBadge(norm, fact) {
+  if (norm == null || fact == null || !norm) return '';
+  const diffPct = Math.round((fact - norm) / norm * 100);
+  const over = diffPct > 0;
+  return `<span class="text-[8px] font-black rounded-full px-2 py-0.5 ${over ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}">${over ? '+' : ''}${diffPct}%</span>`;
+}
+function renderMaterialLedgerList() {
+  const el = document.getElementById('dash-ledger-list');
+  if (!el) return;
+  const sorted = materialLedger.slice().sort((a, b) => b.ts - a.ts);
+  el.innerHTML = sorted.length ? sorted.map(m => `
+    <div class="bg-gray-50 rounded-2xl p-2.5 space-y-1">
+      <div class="flex items-center justify-between">
+        <div class="text-[10px] font-black text-gray-800">${escapeHtmlProd(m.article)}</div>
+        <button onclick="deleteMaterialLedgerEntry('${m.id}')" class="text-[9px] bg-red-50 text-red-600 px-2 py-1 rounded-xl font-black">🗑</button>
+      </div>
+      <div class="text-[9px] text-gray-500 flex flex-wrap gap-x-3 gap-y-0.5">
+        ${m.normBase != null || m.factBase != null ? `<span>Основа: ${m.factBase ?? '—'} / ${m.normBase ?? '—'} кг ${ledgerVarianceBadge(m.normBase, m.factBase)}</span>` : ''}
+        ${m.normPaint != null || m.factPaint != null ? `<span>Краска: ${m.factPaint ?? '—'} / ${m.normPaint ?? '—'} кг ${ledgerVarianceBadge(m.normPaint, m.factPaint)}</span>` : ''}
+      </div>
+      <div class="text-[8px] text-gray-400">${new Date(m.ts).toLocaleDateString('ru-RU')} · ${escapeHtmlProd(m.createdBy || '—')}</div>
+    </div>`).join('') : '<p class="text-gray-400 text-center py-3 text-xs">Записей пока нет</p>';
+}
+
+// ---------- Директор: сводный рендер всей панели ----------
+async function renderDirectorDashboard() {
+  await renderKpiDashboard();
+  renderBitrixCard();
+  renderDirectorPlanExecution();
+  renderShiftReportsCard();
+  renderDirectorDefectsList();
+  renderDirectorImportantOrders();
+  renderDirectorLineLoad();
+  renderDowntimeHistory();
+  renderPlannedMaintenanceCard();
+  renderOeeCard();
+  renderRawMaterialsList();
+  renderMaterialLedgerList();
+}
+
+// ---------- Учёт хода линии: «Линия поехала» / «Артикул закончен» ----------
+// Скорость линии вводится вручную (датчиков в приложении нет). Метраж = скорость
+// (м/мин) × время хода + то, что было сделано до нажатия «Линия поехала» (если
+// человек пришёл на смену, когда артикул уже идёт); рулоны и паллеты — по
+// формуле 1 рул. = 10,05 м, 1 пал. = 96 рул.
+// Линия у заказа (из импорта: "Линия №1", "Линия 2"...) и линия у учёта хода
+// (селект со значениями "1".."4") записываются по-разному, поэтому для
+// сравнения всегда достаём из строки просто номер линии.
+function normalizeLineKey(v) {
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  const m = s.match(/\d+/);
+  if (m) return m[0];
+  const words = { 'первая': '1', 'первaя': '1', 'вторая': '2', 'третья': '3', 'четвертая': '4', 'четвёртая': '4' };
+  for (const [word, number] of Object.entries(words)) if (s.includes(word)) return number;
+  return s;
+}
+function getLineForRunPrefix(prefix) {
+  if (prefix === 'printer') return currentUserProfile && currentUserProfile.line ? String(currentUserProfile.line) : '';
+  const sel = document.getElementById('dash-linerun-line-lead');
+  return sel ? sel.value : '';
+}
+// Незавершённые заказы плана для данной линии — используются и для выпадающего
+// списка артикулов при старте, и для расчёта "сколько ещё осталось" на ходу.
+function getOpenOrdersForLine(line) {
+  const key = normalizeLineKey(line);
+  return productionOrders.filter(o => o.status !== 'done' && (!o.line || normalizeLineKey(o.line) === key));
+}
+// Список артикулов в поле «Артикул» на вкладке «Колорист»: как только
+// выбрана линия, подставляем туда (через <datalist>) все ещё не завершённые
+// артикулы плана, которые «забиты» на эту линию — из файла, загруженного
+// на вкладке «Производство». Поле остаётся обычным текстовым — можно
+// выбрать из списка одним тапом или ввести вручную, если артикула там нет.
+function renderColoristArticleOptions() {
+  const dl = document.getElementById('colorist-article-datalist');
+  const dropdown = document.getElementById('colorist-article-dropdown');
+  if (!dl && !dropdown) return;
+  const lineSel = document.getElementById('colorist-line');
+  const line = lineSel ? lineSel.value : '';
+  if (!line) {
+    if (dl) dl.innerHTML = '';
+    if (dropdown) { dropdown.innerHTML = ''; dropdown.classList.add('hidden'); }
+    return;
+  }
+  const openOrders = getOpenOrdersForLine(line);
+  if (dl) dl.innerHTML = openOrders.map(o => `<option value="${escapeHtmlProd(o.article)}">${o.qty ? (escapeHtmlProd(o.article) + ' — ' + escapeHtmlProd(o.qty) + ' м') : ''}</option>`).join('');
+  // Нативный <datalist> ненадёжно показывает подсказки на мобильных браузерах
+  // (в частности iOS Safari), поэтому дублируем список собственным кликабельным
+  // выпадающим блоком — фильтруем по тому, что уже введено в поле.
+  if (dropdown) {
+    const articleEl = document.getElementById('article');
+    const typed = (articleEl && articleEl.value || '').trim().toLowerCase();
+    const matches = openOrders.filter(o => !typed || o.article.toLowerCase().includes(typed));
+    if (!matches.length) { dropdown.innerHTML = ''; dropdown.classList.add('hidden'); return; }
+    dropdown.innerHTML = matches.slice(0, 30).map(o => `
+      <div class="px-4 py-2.5 text-sm font-bold border-b border-gray-50 last:border-0 active:bg-gray-100" onclick="selectColoristArticle('${String(o.article).replace(/'/g, "\\'")}')">
+        ${escapeHtmlProd(o.article)}${o.qty ? ` <span class="text-gray-400 font-normal text-[11px]">— ${escapeHtmlProd(String(o.qty))} м</span>` : ''}
+      </div>`).join('');
+    dropdown.classList.remove('hidden');
+  }
+}
+function selectColoristArticle(article) {
+  const articleEl = document.getElementById('article');
+  if (articleEl) articleEl.value = article;
+  const dropdown = document.getElementById('colorist-article-dropdown');
+  if (dropdown) dropdown.classList.add('hidden');
+  autofillByArticle();
+}
+function findOrderForRun(line, article) {
+  const key = normalizeLineKey(line);
+  const art = String(article || '').trim().toLowerCase();
+  return productionOrders.find(o => o.article.trim().toLowerCase() === art && (!o.line || normalizeLineKey(o.line) === key) && o.status !== 'done');
+}
+function onLineRunArticleSelectChange(prefix) {
+  const sel = document.getElementById('dash-linerun-article-select-' + prefix);
+  const manualWrap = document.getElementById('dash-linerun-article-manual-wrap-' + prefix);
+  if (!sel || !manualWrap) return;
+  manualWrap.classList.toggle('hidden', sel.value !== '__manual__');
+}
+function startLineRun(prefix) {
+  const line = getLineForRunPrefix(prefix);
+  if (!line) { toast('Линия не определена — для печатника она берётся из профиля, обратитесь к администратору.'); return; }
+  const selEl = document.getElementById('dash-linerun-article-select-' + prefix);
+  const manualEl = document.getElementById('dash-linerun-article-manual-' + prefix);
+  let article = '';
+  if (selEl && selEl.value && selEl.value !== '__manual__') article = selEl.value.trim();
+  else article = (manualEl && manualEl.value || '').trim();
+  const speedEl = document.getElementById('dash-linerun-speed-' + prefix);
+  const offsetEl = document.getElementById('dash-linerun-offset-' + prefix);
+  const speed = speedEl ? parseFloat(speedEl.value) : NaN;
+  const offsetRolls = offsetEl ? parseFloat((offsetEl.value || '').replace(',', '.')) : NaN;
+  const offsetMeters = !isNaN(offsetRolls) && offsetRolls > 0 ? Math.round(offsetRolls * METERS_PER_ROLL * 10) / 10 : 0;
+  if (!article) { toast('Укажите артикул, который сейчас идёт на линии.'); return; }
+  if (lineRuns.some(r => String(r.line) === line && !r.endTs)) { toast('На этой линии уже идёт учёт хода — сначала завершите текущий артикул.'); return; }
+  lineRuns.push({ id: 'lr' + Date.now(), line, article, startTs: Date.now(), endTs: null, speedMPerMin: isNaN(speed) ? null : speed, offsetMeters, meters: 0, rolls: 0, pallets: 0, createdBy: currentUserProfile.name, role: currentUserProfile.role });
+  saveLineRuns(lineRuns);
+  syncArrayToCloud('lineRuns', lineRuns);
+  renderLineRunCard(prefix);
+}
+function updateLineRunSpeed(prefix, id) {
+  const run = lineRuns.find(r => r.id === id);
+  if (!run) return;
+  const input = prompt('Новая скорость линии, м/мин:', run.speedMPerMin || '');
+  const val = parseFloat((input || '').replace(',', '.'));
+  if (isNaN(val)) return;
+  run.speedMPerMin = val;
+  saveLineRuns(lineRuns);
+  syncArrayToCloud('lineRuns', lineRuns);
+  renderLineRunCard(prefix);
+}
+function stopLineRun(prefix, id) {
+  const run = lineRuns.find(r => r.id === id);
+  if (!run) return;
+  run.endTs = Date.now();
+  const minutes = (run.endTs - run.startTs) / 60000;
+  const speed = run.speedMPerMin || 0;
+  run.meters = Math.round(((run.offsetMeters || 0) + speed * minutes) * 10) / 10;
+  run.rolls = Math.round(run.meters / METERS_PER_ROLL * 10) / 10;
+  run.pallets = Math.round(run.rolls / ROLLS_PER_PALLET * 100) / 100;
+  saveLineRuns(lineRuns);
+  syncArrayToCloud('lineRuns', lineRuns);
+  // Если в плане заказов есть подходящий (тот же артикул, та же или не
+  // указанная линия, ещё не выполнен) — сразу засчитываем метраж туда.
+  const order = findOrderForRun(run.line, run.article);
+  let orderNote = '';
+  if (order && run.meters > 0) {
+    order.producedQty = Math.round(((order.producedQty || 0) + run.meters) * 10) / 10;
+    const target = parseFloat(order.qty);
+    if (target && order.producedQty >= target) order.status = 'done';
+    else if (order.status === 'planned') order.status = 'in_progress';
+    saveProductionOrders(productionOrders);
+    syncArrayToCloud('productionOrders', productionOrders);
+    orderNote = ' — засчитано в заказ «' + order.article + '»';
+    if (typeof renderOrdersList === 'function') renderOrdersList();
+  }
+  toast(run.speedMPerMin ? `Готово: ${run.meters} м (~${Math.round(run.rolls)} рул., ${run.pallets} пал.)${orderNote}` : 'Готово. Скорость не была указана — метраж не посчитан, время хода сохранено.');
+  renderLineRunCard(prefix);
+}
+// Пока идёт активный артикул, обновляем карточку раз в 20 секунд сами —
+// иначе "ориентировочно уже сделано" застывает на моменте нажатия «Линия
+// поехала» и не растёт, пока пользователь не откроет вкладку заново.
+const _lineRunTimers = {};
+function scheduleLineRunTick(prefix) {
+  if (_lineRunTimers[prefix]) clearInterval(_lineRunTimers[prefix]);
+  _lineRunTimers[prefix] = setInterval(() => renderLineRunCard(prefix), 20000);
+}
+function stopLineRunTick(prefix) {
+  if (_lineRunTimers[prefix]) { clearInterval(_lineRunTimers[prefix]); _lineRunTimers[prefix] = null; }
+}
+function renderLineRunCard(prefix) {
+  const el = document.getElementById('dash-linerun-' + prefix);
+  if (!el) return;
+  const line = getLineForRunPrefix(prefix);
+  if (!line) { el.innerHTML = '<p class="text-gray-400 text-center py-2 text-xs">Линия не определена</p>'; stopLineRunTick(prefix); return; }
+  const active = lineRuns.find(r => String(r.line) === line && !r.endTs);
+  if (!active) {
+    stopLineRunTick(prefix);
+    const recent = lineRuns.filter(r => String(r.line) === line && r.endTs).sort((a, b) => b.endTs - a.endTs).slice(0, 3);
+    const openOrders = getOpenOrdersForLine(line);
+    const selectHtml = openOrders.length ? `
+        <select id="dash-linerun-article-select-${prefix}" onchange="onLineRunArticleSelectChange('${prefix}')" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+          <option value="">— выберите артикул из плана —</option>
+          ${openOrders.map(o => `<option value="${escapeHtmlProd(o.article)}">${escapeHtmlProd(o.article)}${o.qty ? ' · ' + escapeHtmlProd(o.qty) + ' м' : ''}</option>`).join('')}
+          <option value="__manual__">➕ Другой (ввести вручную)</option>
+        </select>
+        <div id="dash-linerun-article-manual-wrap-${prefix}" class="hidden">
+          <input type="text" id="dash-linerun-article-manual-${prefix}" placeholder="Артикул вручную" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+        </div>` : `
+        <div id="dash-linerun-article-manual-wrap-${prefix}">
+          <input type="text" id="dash-linerun-article-manual-${prefix}" placeholder="Артикул, который сейчас пойдёт" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+        </div>`;
+    el.innerHTML = `
+      <div class="space-y-1.5">
+        ${selectHtml}
+        <input type="number" id="dash-linerun-speed-${prefix}" placeholder="Скорость линии, м/мин" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+        <input type="number" id="dash-linerun-offset-${prefix}" placeholder="Уже сделано на начало смены, рулонов (необязательно)" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+        <button onclick="startLineRun('${prefix}')" class="w-full bg-emerald-600 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">▶️ Линия поехала</button>
+      </div>
+      ${recent.length ? `<div class="pt-2 space-y-1">${recent.map(r => `<div class="text-[9px] text-gray-400 flex justify-between"><span>${escapeHtmlProd(r.article)}</span><span>${r.meters} м · ${Math.round(r.rolls)} рул.</span></div>`).join('')}</div>` : ''}`;
+    return;
+  }
+  scheduleLineRunTick(prefix);
+  const elapsedMs = Date.now() - active.startTs;
+  const h = Math.floor(elapsedMs / 3600000), m = Math.floor((elapsedMs % 3600000) / 60000);
+  const offsetMeters = active.offsetMeters || 0;
+  const estMeters = active.speedMPerMin != null ? Math.round((offsetMeters + active.speedMPerMin * (elapsedMs / 60000)) * 10) / 10 : (offsetMeters || null);
+  const estRolls = estMeters != null ? Math.round(estMeters / METERS_PER_ROLL * 10) / 10 : null;
+  const order = findOrderForRun(active.line, active.article);
+  let progressHtml = '';
+  if (order) {
+    const target = parseFloat(order.qty);
+    if (target) {
+      const targetRolls = Math.round(target / METERS_PER_ROLL * 10) / 10;
+      const madeMeters = estMeters != null ? estMeters : 0;
+      const remainingMeters = Math.max(0, Math.round((target - madeMeters) * 10) / 10);
+      const remainingRolls = Math.round(remainingMeters / METERS_PER_ROLL * 10) / 10;
+      let etaHtml = '';
+      if (active.speedMPerMin && remainingMeters > 0) {
+        const etaMs = Date.now() + (remainingMeters / active.speedMPerMin) * 60000;
+        const etaDate = new Date(etaMs);
+        const sameDay = etaDate.toDateString() === new Date().toDateString();
+        const etaStr = etaDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) + (sameDay ? '' : ' (' + etaDate.toLocaleDateString('ru-RU') + ')');
+        etaHtml = ` · закончит ориентировочно в ${etaStr}`;
+      } else if (remainingMeters <= 0) {
+        etaHtml = ' · план по этому артикулу уже выполнен';
+      }
+      progressHtml = `<div class="text-[9px] text-emerald-600">Нужно по плану: ${targetRolls} рул. (${target} м) · осталось ~${remainingRolls} рул. (${remainingMeters} м)${etaHtml}</div>`;
+    }
+  }
+  el.innerHTML = `
+    <div class="bg-emerald-50 border border-emerald-100 rounded-2xl p-3 space-y-1.5">
+      <div class="flex items-center justify-between">
+        <div class="text-[11px] font-black text-emerald-800 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>Линия ${escapeHtmlProd(line)} едет</div>
+        <span class="text-[9px] text-emerald-600 font-bold">${h} ч ${m} мин</span>
+      </div>
+      <div class="text-[10px] text-emerald-700 font-bold">${escapeHtmlProd(active.article)}</div>
+      <div class="text-[9px] text-emerald-600">Скорость: ${active.speedMPerMin ? active.speedMPerMin + ' м/мин' : 'не указана'}${estMeters != null ? ' · сделано ориентировочно ' + estMeters + ' м (~' + estRolls + ' рул.)' : ''}</div>
+      ${progressHtml}
+      <div class="flex gap-1.5">
+        <button onclick="updateLineRunSpeed('${prefix}','${active.id}')" class="flex-1 bg-white text-emerald-700 py-2 rounded-xl font-black text-[9px] uppercase border border-emerald-200">✏️ Скорость</button>
+        <button onclick="stopLineRun('${prefix}','${active.id}')" class="flex-1 bg-emerald-600 text-white py-2 rounded-xl font-black text-[9px] uppercase">✅ Артикул закончен</button>
+      </div>
+    </div>`;
+}
+
+// ---------- Интеграция с Bitrix24: сделки CRM -> план заказов (одностороннее) ----------
+async function bitrixRawCall(method, params) {
+  if (!bitrixConfig.webhookUrl) throw new Error('вебхук не указан');
+  const base = bitrixConfig.webhookUrl.trim().replace(/\/+$/, '');
+  const url = base + '/' + method + '.json';
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params || {}) });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error_description || data.error);
+  return data;
+}
+function saveBitrixWebhook() {
+  const input = document.getElementById('bitrix-webhook-input');
+  const url = (input && input.value || '').trim();
+  if (!url) { toast('Вставьте ссылку вебхука.'); return; }
+  bitrixConfig.webhookUrl = url;
+  saveBitrixConfig(bitrixConfig);
+  toast('Вебхук сохранён');
+}
+function saveBitrixMapping() {
+  ['fieldArticle', 'fieldQty', 'fieldLine', 'fieldDeadline', 'stageFilter', 'fieldPriority', 'priorityValue', 'fieldExport', 'exportValue'].forEach(k => {
+    const el = document.getElementById('bitrix-' + k);
+    if (el) bitrixConfig[k] = el.value.trim();
+  });
+  const rollsEl = document.getElementById('bitrix-qtyInRolls');
+  bitrixConfig.qtyInRolls = !!(rollsEl && rollsEl.checked);
+  saveBitrixConfig(bitrixConfig);
+  toast('Настройки полей сохранены');
+}
+async function bitrixShowFields() {
+  const el = document.getElementById('bitrix-fields-list');
+  if (!el) return;
+  el.textContent = 'Загружаю список полей...';
+  try {
+    const data = await bitrixRawCall('crm.deal.fields', {});
+    const fields = data.result || {};
+    const rows = Object.keys(fields).map(code => `<div class="flex justify-between gap-2 text-[9px] text-gray-500 border-b border-gray-100 py-1"><span class="font-mono shrink-0">${escapeHtmlProd(code)}</span><span class="text-gray-400 truncate">${escapeHtmlProd(fields[code] && fields[code].title || '')}</span></div>`).join('');
+    el.innerHTML = `<div class="max-h-40 overflow-y-auto bg-gray-50 rounded-xl p-2 mt-1">${rows || 'Полей не найдено'}</div>`;
+  } catch (e) {
+    el.textContent = 'Не удалось получить список полей: ' + e.message + '. Проверьте ссылку вебхука и права доступа к CRM.';
+  }
+}
+function bitrixDateToIso(raw) {
+  if (!raw) return '';
+  return String(raw).slice(0, 10);
+}
+async function bitrixSyncOrders(manual) {
+  const statusEl = document.getElementById('bitrix-sync-status');
+  if (!bitrixConfig.webhookUrl) { if (statusEl) statusEl.textContent = 'Сначала укажите и сохраните вебхук.'; if (manual) toast('Сначала укажите вебхук Bitrix24.'); return; }
+  if (statusEl) statusEl.textContent = 'Синхронизация...';
+  try {
+    const articleField = bitrixConfig.fieldArticle || 'TITLE';
+    const deadlineField = bitrixConfig.fieldDeadline || 'BEGINDATE';
+    const select = ['ID', articleField, deadlineField];
+    ['fieldQty', 'fieldLine', 'fieldPriority', 'fieldExport'].forEach(k => { if (bitrixConfig[k]) select.push(bitrixConfig[k]); });
+    const filter = {};
+    if (bitrixConfig.stageFilter) filter.STAGE_ID = bitrixConfig.stageFilter;
+    let start = 0, deals = [];
+    for (let page = 0; page < 40; page++) {
+      const data = await bitrixRawCall('crm.deal.list', { filter, select, order: { ID: 'DESC' }, start });
+      deals = deals.concat(data.result || []);
+      if (data.next == null) break;
+      start = data.next;
+    }
+    let added = 0, updated = 0;
+    deals.forEach(deal => {
+      const article = String(deal[articleField] || '').trim();
+      if (!article) return;
+      let qty = bitrixConfig.fieldQty ? parseFloat(String(deal[bitrixConfig.fieldQty]).replace(',', '.')) : NaN;
+      if (!isNaN(qty) && bitrixConfig.qtyInRolls) qty = Math.round(qty * METERS_PER_ROLL * 10) / 10;
+      const line = bitrixConfig.fieldLine ? String(deal[bitrixConfig.fieldLine] || '').trim() : '';
+      const deadline = bitrixDateToIso(deal[deadlineField]);
+      const priorityRaw = bitrixConfig.fieldPriority ? deal[bitrixConfig.fieldPriority] : null;
+      const hasPriority = priorityRaw != null && String(priorityRaw).trim() !== '' && String(priorityRaw) !== '0';
+      const priority = hasPriority && (!bitrixConfig.priorityValue || String(priorityRaw).toLowerCase() === bitrixConfig.priorityValue.toLowerCase()) ? 'urgent' : 'normal';
+      const exportRaw = bitrixConfig.fieldExport ? deal[bitrixConfig.fieldExport] : null;
+      const hasExport = exportRaw != null && String(exportRaw).trim() !== '' && String(exportRaw) !== '0';
+      const exportFlag = !!(hasExport && (!bitrixConfig.exportValue || String(exportRaw).toLowerCase() === bitrixConfig.exportValue.toLowerCase()));
+      const existing = productionOrders.find(o => o.bitrixId === deal.ID);
+      if (existing) {
+        existing.article = article;
+        if (!isNaN(qty)) existing.qty = qty;
+        existing.line = line;
+        existing.deadline = deadline;
+        existing.priority = priority;
+        existing.exportFlag = exportFlag;
+        updated++;
+      } else {
+        productionOrders.push({
+          id: 'ord' + Date.now() + '_' + deal.ID, bitrixId: deal.ID, ts: Date.now(),
+          article, qty: isNaN(qty) ? '' : qty, deadline, line,
+          status: 'planned', producedQty: 0, priority, exportFlag
+        });
+        added++;
+      }
+    });
+    saveProductionOrders(productionOrders);
+    renderOrdersList();
+    syncArrayToCloud('productionOrders', productionOrders);
+    bitrixConfig.lastSyncTs = Date.now();
+    saveBitrixConfig(bitrixConfig);
+    if (statusEl) statusEl.textContent = `Готово (${new Date().toLocaleTimeString('ru-RU')}): сделок получено — ${deals.length}, новых заказов — ${added}, обновлено — ${updated}.`;
+    if (manual) toast(`Bitrix24: добавлено ${added}, обновлено ${updated}`);
+    const role = currentUserProfile && currentUserProfile.role;
+    if ((role === 'production_director' || role === 'shop_chief' || role === 'general_director') && typeof renderDirectorDashboard === 'function') renderDirectorDashboard();
+  } catch (e) {
+    console.error(e);
+    if (statusEl) statusEl.textContent = 'Ошибка синхронизации: ' + e.message + '. Проверьте ссылку вебхука и права доступа к CRM.';
+    if (manual) toast('Не удалось синхронизировать с Bitrix24');
+  }
+}
+function toggleBitrixAutoSync() {
+  const cb = document.getElementById('bitrix-autosync-toggle');
+  bitrixConfig.autoSync = !!(cb && cb.checked);
+  saveBitrixConfig(bitrixConfig);
+  setupBitrixAutoSync();
+}
+function setupBitrixAutoSync() {
+  if (bitrixAutoSyncTimer) { clearInterval(bitrixAutoSyncTimer); bitrixAutoSyncTimer = null; }
+  if (bitrixConfig.autoSync && bitrixConfig.webhookUrl) {
+    bitrixAutoSyncTimer = setInterval(() => bitrixSyncOrders(false), 5 * 60 * 1000);
+  }
+}
+function renderBitrixCard() {
+  const urlEl = document.getElementById('bitrix-webhook-input');
+  if (urlEl && !urlEl.value) urlEl.value = bitrixConfig.webhookUrl || '';
+  ['fieldArticle', 'fieldQty', 'fieldLine', 'stageFilter', 'fieldPriority', 'priorityValue', 'fieldExport', 'exportValue'].forEach(k => {
+    const el = document.getElementById('bitrix-' + k);
+    if (el && !el.value) el.value = bitrixConfig[k] || '';
+  });
+  const deadlineSel = document.getElementById('bitrix-fieldDeadline');
+  if (deadlineSel && bitrixConfig.fieldDeadline) deadlineSel.value = bitrixConfig.fieldDeadline;
+  const rollsEl = document.getElementById('bitrix-qtyInRolls');
+  if (rollsEl) rollsEl.checked = !!bitrixConfig.qtyInRolls;
+  const autoEl = document.getElementById('bitrix-autosync-toggle');
+  if (autoEl) autoEl.checked = !!bitrixConfig.autoSync;
+  const statusEl = document.getElementById('bitrix-sync-status');
+  if (statusEl && !statusEl.textContent) statusEl.textContent = bitrixConfig.lastSyncTs ? 'Последняя синхронизация: ' + new Date(bitrixConfig.lastSyncTs).toLocaleString('ru-RU') : 'Синхронизация ещё не запускалась.';
 }
 
 // ---------- Мастер УПП: план заказов по линиям ----------
+function clearProductionPlan() {
+  if (!confirm('Удалить весь текущий план заказов? Это нельзя отменить.')) return;
+  productionOrders = [];
+  saveProductionOrders(productionOrders);
+  renderOrdersList();
+  syncArrayToCloud('productionOrders', productionOrders);
+  toast('План очищен');
+}
+function excelDateToIso(raw) {
+  if (raw instanceof Date) return raw.toISOString().slice(0, 10);
+  if (typeof raw === 'number' && window.XLSX && XLSX.SSF) {
+    const d = XLSX.SSF.parse_date_code(raw);
+    if (d) return `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`;
+  }
+  const s = String(raw || '').trim();
+  const m = s.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{2,4})$/);
+  if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`; }
+  return s;
+}
+// Некоторые цеха ведут "Производственное задание" не как плоскую таблицу,
+// а как несколько блоков-линий, расположенных рядом по горизонтали на одном
+// листе, с реальными заголовками столбцов (АРТИКУЛ, КОЛИЧЕСТВО ЗАКАЗ...) не
+// в первой строке, а на 2-3 строки ниже (сверху — общий заголовок и название
+// линии). Обычный построчный разбор (sheet_to_json с заголовком в 1-й строке)
+// такой файл не понимает и ничего не находит. Эта функция распознаёт такую
+// раскладку и разбирает её отдельно, блок за блоком.
+function parseMultiBlockOrdersSheet(sheet) {
+  const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true });
+  const norm = v => String(v == null ? '' : v).toLowerCase();
+  let headerRowIdx = -1;
+  const scanLimit = Math.min(raw.length, 15);
+  for (let i = 0; i < scanLimit; i++) {
+    const artHits = (raw[i] || []).filter(c => norm(c).includes('артик')).length;
+    if (artHits >= 2) { headerRowIdx = i; break; }
+  }
+  if (headerRowIdx === -1) return null; // не похоже на многоблочный формат — пусть обработает обычный разбор
+
+  const headerRow = raw[headerRowIdx] || [];
+  // Название линии в реальных заданиях бывает на 1–3 строки выше заголовков
+  // и иногда находится не прямо над колонкой артикула.
+  const labelRows = raw.slice(Math.max(0, headerRowIdx - 3), headerRowIdx);
+  const artCols = [];
+  headerRow.forEach((c, i) => { if (norm(c).includes('артик')) artCols.push(i); });
+  if (!artCols.length) return null;
+
+  const findColInRange = (start, end, needles) => {
+    for (let i = start; i <= end; i++) { if (needles.some(n => norm(headerRow[i]).includes(n))) return i; }
+    return -1;
+  };
+  const deadlineRe = /к\s*(\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4})/i;
+
+  const blocks = artCols.map((artCol, i) => {
+    const rangeStart = Math.max(0, artCol - 2);
+    const rangeEnd = (i + 1 < artCols.length) ? (artCols[i + 1] - 3) : (headerRow.length - 1);
+    const qtyCol = findColInRange(artCol, rangeEnd, ['колич']);
+    const dateCol = findColInRange(rangeStart, artCol, ['дата']);
+    const sectCol = findColInRange(rangeStart, artCol, ['секц']);
+    const hoursCol = findColInRange(artCol, rangeEnd, ['час']);
+    let line = '';
+    for (let ri = labelRows.length - 1; ri >= 0 && !line; ri--) {
+      const row = labelRows[ri] || [];
+      for (let c = rangeStart; c <= rangeEnd; c++) {
+        const value = String(row[c] == null ? '' : row[c]).trim();
+        if (/линия|line|\b[1-4]\b|первая|вторая|третья|четвер/i.test(value)) { line = value; break; }
+      }
+    }
+    if (!line) line = `Линия №${i + 1}`;
+    return { artCol, qtyCol, dateCol, sectCol, hoursCol, rangeStart, rangeEnd, line };
+  });
+
+  const orders = [];
+  for (let r = headerRowIdx + 1; r < raw.length; r++) {
+    const row = raw[r] || [];
+    blocks.forEach(b => {
+      const artVal = row[b.artCol];
+      const article = artVal == null ? '' : String(artVal).trim();
+      if (!article) return;
+      let qty = b.qtyCol >= 0 ? parseFloat(String(row[b.qtyCol]).replace(',', '.').replace(/[^0-9.\-]/g, '')) : NaN;
+      const commentParts = [];
+      for (let c = b.rangeStart; c <= b.rangeEnd; c++) {
+        if (c === b.artCol || c === b.qtyCol || c === b.dateCol || c === b.sectCol || c === b.hoursCol) continue;
+        const v = row[c];
+        const s = v == null ? '' : (v instanceof Date ? excelDateToIso(v) : String(v).trim());
+        if (s) commentParts.push(s);
+      }
+      const comment = commentParts.join(' / ');
+      const dl = comment.match(deadlineRe);
+      orders.push({
+        article, qty: isNaN(qty) ? '' : qty, line: b.line,
+        deadline: dl ? excelDateToIso(dl[1]) : '',
+        priority: /срочн/i.test(comment) ? 'urgent' : 'normal',
+        exportFlag: /экспорт/i.test(comment),
+        arrivalDate: b.dateCol >= 0 ? (row[b.dateCol] instanceof Date ? excelDateToIso(row[b.dateCol]) : String(row[b.dateCol] || '').trim()) : '',
+        comment
+      });
+    });
+  }
+  return orders;
+}
+async function handleOrdersExcelImport(evt, statusElId) {
+  const file = evt.target.files && evt.target.files[0];
+  const statusEl = document.getElementById(statusElId || 'dash-orders-import-status');
+  if (!file) return;
+  if (!window.XLSX) { if (statusEl) statusEl.textContent = 'Не удалось загрузить библиотеку чтения Excel — проверьте интернет-соединение и попробуйте ещё раз.'; return; }
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    let added = 0, skipped = 0, duplicates = 0;
+    // Ключ для защиты от повторного добавления одного и того же заказа при
+    // повторном импорте файла в течение дня (задание может меняться
+    // несколько раз за смену) — сравниваем по линии+артикулу+количеству.
+    const existingKeys = new Set(productionOrders.map(o => `${(o.line || '').trim()}|${(o.article || '').trim()}|${o.qty}`));
+
+    const multiBlockOrders = parseMultiBlockOrdersSheet(sheet);
+    if (multiBlockOrders) {
+      if (!multiBlockOrders.length) { if (statusEl) statusEl.textContent = 'В файле не нашлось строк с артикулами.'; evt.target.value = ''; return; }
+      multiBlockOrders.forEach((o, idx) => {
+        const key = `${o.line.trim()}|${o.article.trim()}|${o.qty}`;
+        if (existingKeys.has(key)) { duplicates++; return; }
+        existingKeys.add(key);
+        productionOrders.push({
+          id: 'ord' + Date.now() + '_' + idx, ts: Date.now(), article: o.article,
+          qty: o.qty, deadline: o.deadline, line: o.line,
+          status: 'planned', producedQty: 0, priority: o.priority, exportFlag: o.exportFlag
+        });
+        added++;
+      });
+    } else {
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      if (!rows.length) { if (statusEl) statusEl.textContent = 'В файле не нашлось строк с данными.'; evt.target.value = ''; return; }
+      const findKey = (row, candidates) => Object.keys(row).find(k => candidates.some(c => k.toLowerCase().includes(c)));
+      rows.forEach((row, idx) => {
+        const artKey = findKey(row, ['артик', 'дизайн', 'коллекц', 'наименован']);
+        const article = artKey ? String(row[artKey]).trim() : '';
+        if (!article) { skipped++; return; }
+        const qtyKey = findKey(row, ['метр', 'кол-во', 'колич', 'рулон', 'тираж']);
+        let qty = qtyKey ? parseFloat(String(row[qtyKey]).replace(',', '.').replace(/[^0-9.\-]/g, '')) : NaN;
+        if (qtyKey && !isNaN(qty) && /рулон/i.test(qtyKey)) qty = Math.round(qty * METERS_PER_ROLL * 10) / 10;
+        const lineKey = findKey(row, ['лини']);
+        const deadlineKey = findKey(row, ['срок', 'дата']);
+        const urgentKey = findKey(row, ['срочн', 'приоритет']);
+        const exportKey = findKey(row, ['экспорт']);
+        const deadline = deadlineKey && row[deadlineKey] ? excelDateToIso(row[deadlineKey]) : '';
+        const priority = urgentKey && /(да|срочн|1|yes|true|✓|✔)/i.test(String(row[urgentKey])) ? 'urgent' : 'normal';
+        const exportFlag = !!(exportKey && /(да|1|yes|true|✓|✔)/i.test(String(row[exportKey])));
+        const line = lineKey ? String(row[lineKey]).trim() : '';
+        const key = `${line.trim()}|${article.trim()}|${isNaN(qty) ? '' : qty}`;
+        if (existingKeys.has(key)) { duplicates++; return; }
+        existingKeys.add(key);
+        productionOrders.push({
+          id: 'ord' + Date.now() + '_' + idx, ts: Date.now(), article,
+          qty: isNaN(qty) ? '' : qty, deadline, line,
+          status: 'planned', producedQty: 0, priority, exportFlag
+        });
+        added++;
+      });
+    }
+    saveProductionOrders(productionOrders);
+    renderOrdersList();
+    syncArrayToCloud('productionOrders', productionOrders);
+    const parts = [`добавлено заказов — ${added}`];
+    if (duplicates) parts.push(`уже было в плане — ${duplicates}`);
+    if (skipped) parts.push(`пропущено строк без артикула — ${skipped}`);
+    if (statusEl) statusEl.textContent = `Готово: ${parts.join(', ')}.`;
+    toast(`Импортировано заказов: ${added}`);
+    const role = currentUserProfile && currentUserProfile.role;
+    if ((role === 'production_director' || role === 'shop_chief' || role === 'general_director') && typeof renderDirectorDashboard === 'function') renderDirectorDashboard();
+  } catch (e) {
+    console.error(e);
+    if (statusEl) statusEl.textContent = 'Не удалось прочитать файл — проверьте, что это Excel/CSV.';
+  }
+  evt.target.value = '';
+}
 function addProductionOrder() {
   const article = (document.getElementById('dash-order-article').value || '').trim();
   const qty = (document.getElementById('dash-order-qty').value || '').trim();
   const deadline = document.getElementById('dash-order-deadline').value || '';
   const line = (document.getElementById('dash-order-line').value || '').trim();
+  const priorityEl = document.getElementById('dash-order-priority');
+  const priority = (priorityEl && priorityEl.value) || 'normal';
+  const exportEl = document.getElementById('dash-order-export');
+  const exportFlag = !!(exportEl && exportEl.checked);
   if (!article) { toast('Укажите артикул заказа.'); return; }
-  const list = loadProductionOrders();
-  list.push({ id: 'ord' + Date.now(), ts: Date.now(), article, qty, deadline, line, status: 'planned' });
-  saveProductionOrders(list);
+  productionOrders.push({ id: 'ord' + Date.now(), ts: Date.now(), article, qty, deadline, line, status: 'planned', producedQty: 0, priority, exportFlag });
+  saveProductionOrders(productionOrders);
   ['dash-order-article', 'dash-order-qty', 'dash-order-deadline', 'dash-order-line'].forEach(id => { document.getElementById(id).value = ''; });
+  if (priorityEl) priorityEl.value = 'normal';
+  if (exportEl) exportEl.checked = false;
   toast('Заказ добавлен в план');
   renderOrdersList();
+  syncArrayToCloud('productionOrders', productionOrders);
 }
 const ORDER_STATUS_LABELS = { planned: '📋 В плане', in_progress: '🏃 В работе', done: '✅ Выполнен' };
 const ORDER_STATUS_NEXT = { planned: 'in_progress', in_progress: 'done', done: 'planned' };
 function advanceOrderStatus(id) {
-  const list = loadProductionOrders();
-  const order = list.find(o => o.id === id);
+  const order = productionOrders.find(o => o.id === id);
   if (order) order.status = ORDER_STATUS_NEXT[order.status] || 'planned';
-  saveProductionOrders(list);
+  saveProductionOrders(productionOrders);
   renderOrdersList();
+  syncArrayToCloud('productionOrders', productionOrders);
 }
 function deleteProductionOrder(id) {
-  saveProductionOrders(loadProductionOrders().filter(o => o.id !== id));
+  productionOrders = productionOrders.filter(o => o.id !== id);
+  saveProductionOrders(productionOrders);
   renderOrdersList();
+  syncArrayToCloud('productionOrders', productionOrders);
+}
+// Быстрый ввод факта выполнения (метры) — прибавляется к уже сделанному, а
+// не заменяет его, чтобы можно было отмечать несколько раз за смену.
+function addOrderProgress(id) {
+  const order = productionOrders.find(o => o.id === id);
+  if (!order) return;
+  const input = prompt(`Сколько метров сдано по «${order.article}» добавить к выполнению?`, '');
+  const val = parseFloat((input || '').replace(',', '.'));
+  if (!val || val <= 0) return;
+  order.producedQty = Math.round(((order.producedQty || 0) + val) * 10) / 10;
+  const target = parseFloat(order.qty);
+  if (target && order.producedQty >= target && order.status !== 'done') order.status = 'done';
+  else if (order.status === 'planned') order.status = 'in_progress';
+  saveProductionOrders(productionOrders);
+  renderOrdersList();
+  syncArrayToCloud('productionOrders', productionOrders);
+  if (typeof renderDirectorDashboard === 'function') renderDirectorDashboard();
+}
+function orderPriorityBadge(o) {
+  const parts = [];
+  if (o.priority === 'urgent') parts.push('<span class="text-[8px] font-black uppercase bg-red-100 text-red-700 rounded-full px-2 py-0.5">🔴 срочный</span>');
+  if (o.exportFlag) parts.push('<span class="text-[8px] font-black uppercase bg-violet-100 text-violet-700 rounded-full px-2 py-0.5">🌍 экспорт</span>');
+  return parts.join(' ');
 }
 function renderOrdersList() {
   const el = document.getElementById('dash-orders-list');
   if (!el) return;
-  const list = loadProductionOrders().sort((a, b) => (a.deadline || '9999').localeCompare(b.deadline || '9999'));
-  el.innerHTML = list.length ? list.map(o => `
-    <div class="bg-white border border-gray-100 rounded-2xl p-3 flex items-center gap-2">
-      <div class="flex-1 min-w-0">
-        <div class="text-[11px] font-black text-gray-800">${escapeHtmlProd(o.article)} ${o.qty ? '· ' + escapeHtmlProd(o.qty) + ' м' : ''}</div>
-        <div class="text-[9px] text-gray-400 mt-0.5">${o.line ? 'линия ' + escapeHtmlProd(o.line) + ' · ' : ''}${o.deadline ? 'срок ' + o.deadline : 'срок не задан'}</div>
+  const list = productionOrders.slice().sort((a, b) => (a.deadline || '9999').localeCompare(b.deadline || '9999'));
+  el.innerHTML = list.length ? list.map(o => {
+    const target = parseFloat(o.qty);
+    const produced = o.producedQty || 0;
+    const pct = target ? Math.min(100, Math.round(produced / target * 100)) : null;
+    return `
+    <div class="bg-white border border-gray-100 rounded-2xl p-3 space-y-1.5">
+      <div class="flex items-center gap-2">
+        <div class="flex-1 min-w-0">
+          <div class="text-[11px] font-black text-gray-800 flex items-center gap-1 flex-wrap">${escapeHtmlProd(o.article)} ${o.qty ? '· ' + escapeHtmlProd(o.qty) + ' м' : ''} ${orderPriorityBadge(o)}</div>
+          <div class="text-[9px] text-gray-400 mt-0.5">${o.line ? 'линия ' + escapeHtmlProd(o.line) + ' · ' : ''}${o.deadline ? 'срок ' + o.deadline : 'срок не задан'}${pct != null ? ' · сдано ' + produced + ' из ' + target + ' м (' + pct + '%)' : ''}</div>
+        </div>
+        <button onclick="advanceOrderStatus('${o.id}')" class="text-[9px] font-black bg-blue-50 text-blue-700 px-2.5 py-1.5 rounded-xl shrink-0">${ORDER_STATUS_LABELS[o.status] || o.status}</button>
+        <button onclick="deleteProductionOrder('${o.id}')" class="text-[9px] bg-red-50 text-red-600 px-2 py-1.5 rounded-xl font-black shrink-0">🗑</button>
       </div>
-      <button onclick="advanceOrderStatus('${o.id}')" class="text-[9px] font-black bg-blue-50 text-blue-700 px-2.5 py-1.5 rounded-xl shrink-0">${ORDER_STATUS_LABELS[o.status] || o.status}</button>
-      <button onclick="deleteProductionOrder('${o.id}')" class="text-[9px] bg-red-50 text-red-600 px-2 py-1.5 rounded-xl font-black shrink-0">🗑</button>
-    </div>`).join('') : '<p class="text-gray-400 text-center py-4 text-xs">План пуст</p>';
+      ${pct != null ? `<div class="h-1.5 bg-gray-100 rounded-full overflow-hidden"><div class="h-full ${pct >= 100 ? 'bg-emerald-500' : 'bg-blue-500'} rounded-full" style="width:${pct}%"></div></div>` : ''}
+      <button onclick="addOrderProgress('${o.id}')" class="text-[9px] font-black bg-gray-50 text-gray-600 px-2.5 py-1.5 rounded-xl">➕ отметить выполнение, м</button>
+    </div>`;
+  }).join('') : '<p class="text-gray-400 text-center py-4 text-xs">План пуст</p>';
 }
 
 // ===== Журнал смены =====
@@ -11864,6 +13284,15 @@ async function renderShiftPanel() {
       <button onclick="addShiftNote()" class="bg-gray-700 text-white px-3 rounded-xl font-black text-[10px] uppercase shrink-0">+</button>
     </div>
     <div id="shift-close-form" class="hidden space-y-2 pt-1 border-t border-gray-100">
+      ${currentUserProfile && currentUserProfile.role === 'shift_lead' ? `
+      <div class="text-[9px] font-black uppercase text-gray-400">Итог смены (для директора)</div>
+      <div class="grid grid-cols-2 gap-2">
+        <input type="text" id="shift-close-line" placeholder="Линия (если по одной)" class="p-2.5 bg-amber-50 rounded-xl outline-none text-[10px] font-bold border border-amber-100">
+        <input type="number" id="shift-close-rolls" placeholder="Выкатка, рулонов" class="p-2.5 bg-amber-50 rounded-xl outline-none text-[10px] font-bold border border-amber-100">
+        <input type="number" id="shift-close-defect-m" placeholder="Брак, м" class="p-2.5 bg-amber-50 rounded-xl outline-none text-[10px] font-bold border border-amber-100 col-span-2">
+      </div>
+      <p class="text-[8px] text-amber-700 leading-relaxed">% брака посчитается сам: брак, м ÷ (рулоны × 10,05 м). Поля необязательны — можно закрыть смену и без них.</p>
+      ` : ''}
       <textarea id="shift-close-note" rows="2" placeholder="Что передать следующей смене (обязательно к прочтению)" class="w-full p-2.5 bg-amber-50 rounded-xl outline-none text-[10px] font-bold border border-amber-100 resize-none"></textarea>
       <button onclick="endShiftConfirm()" class="w-full bg-red-600 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">⏹ Подтвердить закрытие смены</button>
     </div>
@@ -11898,6 +13327,27 @@ async function endShiftConfirm() {
   active.endTs = Date.now();
   active.closeNote = closeNote;
   await saveShiftToDB(active);
+  if (currentUserProfile && currentUserProfile.role === 'shift_lead') {
+    const lineEl = document.getElementById('shift-close-line');
+    const rollsEl = document.getElementById('shift-close-rolls');
+    const defectEl = document.getElementById('shift-close-defect-m');
+    const rolls = rollsEl ? parseFloat(rollsEl.value) : NaN;
+    const defectM = defectEl ? parseFloat(defectEl.value) : NaN;
+    if (!isNaN(rolls) || !isNaN(defectM)) {
+      const meters = !isNaN(rolls) ? Math.round(rolls * METERS_PER_ROLL * 10) / 10 : null;
+      const defectMeters = isNaN(defectM) ? null : defectM;
+      const defectPercent = (meters && defectMeters != null) ? Math.round(defectMeters / meters * 1000) / 10 : null;
+      shiftReports.push({
+        id: 'sr' + Date.now(), shiftId: active.id, ts: Date.now(),
+        startTs: active.startTs, endTs: active.endTs,
+        line: (lineEl && lineEl.value.trim()) || '',
+        rollsProduced: isNaN(rolls) ? null : rolls, meters, defectMeters, defectPercent,
+        createdBy: currentUserProfile.name
+      });
+      saveShiftReports(shiftReports);
+      syncArrayToCloud('shiftReports', shiftReports);
+    }
+  }
   toast('Смена закрыта' + (closeNote ? ' — заметка передана следующей смене' : ''));
   logCorrection(`Закрыли смену (длительность ${formatShiftDuration(active.endTs - active.startTs)})`, 'shift');
   renderShiftPanel();
@@ -15185,6 +16635,14 @@ function checkSyncStaleness() {
   }
 }
 setInterval(checkSyncStaleness, 5 * 60 * 1000);
+setupBitrixAutoSync();
+// Обновляем таймер «линия едет» раз в 30с даже без облачной синхронизации —
+// иначе на устройстве без общей базы время хода линии не тикало бы само.
+setInterval(() => {
+  const role = currentUserProfile && currentUserProfile.role;
+  if (role === 'senior_printer') renderLineRunCard('printer');
+  if (role === 'shift_lead') renderLineRunCard('lead');
+}, 30000);
 
 // ===== Крупный режим "весы рядом" =====
 // Увеличенный шрифт полей пигментов и минимум лишних элементов на экране —
