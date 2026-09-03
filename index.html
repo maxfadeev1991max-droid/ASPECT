@@ -4446,8 +4446,8 @@ async function checkPaintAlertOnce() {
       if (typeof renderAllLinesStatus === 'function') renderAllLinesStatus();
       const role = currentUserProfile && currentUserProfile.role;
       if (role === 'upp_master') renderOrdersList();
-      if (role === 'senior_printer') renderLineRunCard('printer');
-      if (role === 'shift_lead') { renderLeadFourLines(); renderColoristFourLines('dash-lead-colorist-four-lines'); renderLineRunCard('lead'); }
+      if (role === 'senior_printer') renderLineRunCard('printer', true);
+      if (role === 'shift_lead') { renderLeadFourLines(); renderColoristFourLines('dash-lead-colorist-four-lines'); renderLineRunCard('lead', true); }
       if (role === 'colorist') renderColoristFourLines();
       if ((role === 'production_director' || role === 'shop_chief' || role === 'general_director') && document.getElementById('view-dashboard') && !document.getElementById('view-dashboard').classList.contains('hidden')) {
         renderDirectorDashboard();
@@ -12885,13 +12885,23 @@ function renderAllLinesStatus() {
     </div>`;
   }).join('');
 }
-function renderLineRunCard(prefix) {
+// Кэш последнего отрисованного статуса карточки (per prefix+линия), чтобы
+// пассивные фоновые обновления (опрос облака раз в 2с, тикер раз в 30с)
+// не перестраивали форму выбора артикула заново, если по факту ничего не
+// изменилось — иначе выбранный в <select> артикул и введённая скорость
+// стирались через пару секунд, просто потому что элемент пересоздавался.
+const _lineRunLastRenderedActiveId = {};
+function renderLineRunCard(prefix, passive) {
   if (typeof renderAllLinesStatus === 'function') renderAllLinesStatus();
   const el = document.getElementById('dash-linerun-' + prefix);
   if (!el) return;
   const line = getLineForRunPrefix(prefix);
   if (!line) { el.innerHTML = '<p class="text-gray-400 text-center py-2 text-xs">Линия не определена</p>'; stopLineRunTick(prefix); return; }
   const active = lineRuns.find(r => String(r.line) === line && !r.endTs);
+  const stateKey = prefix + ':' + line;
+  const activeId = active ? active.id : null;
+  if (passive && _lineRunLastRenderedActiveId[stateKey] === activeId) return;
+  _lineRunLastRenderedActiveId[stateKey] = activeId;
   if (!active) {
     stopLineRunTick(prefix);
     const recent = lineRuns.filter(r => String(r.line) === line && r.endTs).sort((a, b) => b.endTs - a.endTs).slice(0, 3);
@@ -16800,8 +16810,8 @@ setupBitrixAutoSync();
 // иначе на устройстве без общей базы время хода линии не тикало бы само.
 setInterval(() => {
   const role = currentUserProfile && currentUserProfile.role;
-  if (role === 'senior_printer') renderLineRunCard('printer');
-  if (role === 'shift_lead') renderLineRunCard('lead');
+  if (role === 'senior_printer') renderLineRunCard('printer', true);
+  if (role === 'shift_lead') renderLineRunCard('lead', true);
 }, 30000);
 
 // ===== Крупный режим "весы рядом" =====
