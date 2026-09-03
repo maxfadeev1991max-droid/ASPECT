@@ -2278,6 +2278,15 @@
   <!-- Начальник смены -->
   <div id="dash-leadview-section" class="hidden space-y-4">
     <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">🎨 Колорирование · начальник смены</div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Начальник смены может сам выбрать любую линию и перейти в форму колориста: загрузить эталон и замес, отметить точки и проверить направление ухода цвета.</p>
+      <div id="dash-lead-colorist-four-lines" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+    </div>
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">🏭 Все 4 линии · управление сменой</div>
+      <div id="dash-lead-four-lines" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+    </div>
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
       <div class="text-[10px] font-black uppercase text-gray-500">📥 Импорт плана из Excel</div>
       <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Тот же файл, что скидывают утром. Колонки находятся по названию сами.</p>
       <input type="file" id="dash-orders-excel-input-lead" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleOrdersExcelImport(event,'dash-orders-import-status-lead')">
@@ -2582,6 +2591,11 @@
 
   <!-- Колорист -->
   <div id="dash-colorist-section" class="hidden space-y-4">
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">🎨 Рабочее место колориста · 4 линии</div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Выберите линию — в форме «Колорист» автоматически откроется её очередь артикулов. Фото эталона, фото замеса, точки и направление ухода цвета сохраняются в выбранной работе.</p>
+      <div id="dash-colorist-four-lines" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+    </div>
     <div class="bg-slate-900 rounded-2xl p-4 space-y-2 text-white">
       <div class="text-[10px] font-black uppercase text-blue-300">🔧 Требуется ремонт</div>
       <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Опишите проблему — заявку увидят все, кто сейчас в приложении. Можно приложить фото.</p>
@@ -4408,11 +4422,14 @@ async function checkPaintAlertOnce() {
       saveMaintRequests(maintRequests);
       renderAllMaintPanels();
       notifyNewMaintRequests();
-      // Не применяем план из ответа, который был запрошен до локального
-      // импорта, и не читаем план во время собственной записи в облако.
-      // Иначе старый снимок возвращает старый список артикулов.
-      if (!productionOrdersCloudSyncing && ordersRevisionAtFetch === productionOrdersRevision) {
-        productionOrders = Array.isArray(remote.productionOrders) ? remote.productionOrders : productionOrders;
+      // Не применяем неполный/устаревший снимок: после импорта ждём, пока
+      // облако действительно вернёт все новые ID. Защита не зависит от таймера.
+      const remoteOrders = Array.isArray(remote.productionOrders) ? remote.productionOrders : null;
+      const remoteHasPendingOrders = !productionOrdersPendingCloudIds.size ||
+        (remoteOrders && [...productionOrdersPendingCloudIds].every(id => remoteOrders.some(o => o.id === id)));
+      if (!productionOrdersCloudSyncing && remoteHasPendingOrders && ordersRevisionAtFetch === productionOrdersRevision) {
+        productionOrders = remoteOrders || productionOrders;
+        productionOrdersPendingCloudIds.clear();
         saveProductionOrders(productionOrders);
         if (typeof renderColoristArticleOptions === 'function') renderColoristArticleOptions();
       }
@@ -4428,7 +4445,8 @@ async function checkPaintAlertOnce() {
       const role = currentUserProfile && currentUserProfile.role;
       if (role === 'upp_master') renderOrdersList();
       if (role === 'senior_printer') renderLineRunCard('printer');
-      if (role === 'shift_lead') renderLineRunCard('lead');
+      if (role === 'shift_lead') { renderLeadFourLines(); renderColoristFourLines('dash-lead-colorist-four-lines'); renderLineRunCard('lead'); }
+      if (role === 'colorist') renderColoristFourLines();
       if ((role === 'production_director' || role === 'shop_chief' || role === 'general_director') && document.getElementById('view-dashboard') && !document.getElementById('view-dashboard').classList.contains('hidden')) {
         renderDirectorDashboard();
       }
@@ -11848,6 +11866,12 @@ let productionOrders = loadProductionOrders();
 // до импорта, не смог затереть только что загруженные заказы.
 let productionOrdersRevision = 0;
 let productionOrdersCloudSyncing = false;
+// После импорта облачный опрос ещё может вернуть снимок, сформированный до
+// записи. В течение этого окна локальный план считается главным источником.
+let productionOrdersIgnoreRemoteUntil = 0;
+// ID заказов, которые должны появиться в облачном снимке после импорта.
+// Защита снимается только после подтверждения, а не по таймеру.
+let productionOrdersPendingCloudIds = new Set();
 let rawMaterials = loadRawMaterials();
 let plannedMaintenance = loadPlannedMaintenance();
 let materialLedger = loadMaterialLedger();
@@ -11905,6 +11929,8 @@ function renderDashboardView() {
   } else if (role === 'shift_lead') {
     sections.lead.classList.remove('hidden');
     renderLinesOverview();
+    renderLeadFourLines();
+    renderColoristFourLines('dash-lead-colorist-four-lines');
     renderLineRunCard('lead');
   } else if (role === 'production_director' || role === 'shop_chief' || role === 'general_director') {
     sections.kpi.classList.remove('hidden');
@@ -11914,6 +11940,7 @@ function renderDashboardView() {
     renderOrdersList();
   } else if (role === 'colorist') {
     sections.colorist.classList.remove('hidden');
+    renderColoristFourLines();
   }
   // Заявки "Требуется ремонт" видны/подаются с нескольких ролей сразу —
   // рендерим все панели разом, лишние просто остаются скрыты вместе со
@@ -12650,6 +12677,53 @@ function getOpenOrdersForLine(line) {
   const key = normalizeLineKey(line);
   return productionOrders.filter(o => o.status !== 'done' && (!o.line || normalizeLineKey(o.line) === key));
 }
+function openColoristLine(line) {
+  const lineEl = document.getElementById('colorist-line');
+  if (lineEl) lineEl.value = String(line);
+  if (typeof renderColoristArticleOptions === 'function') renderColoristArticleOptions();
+  switchView('colorist');
+  setTimeout(() => {
+    const articleEl = document.getElementById('article');
+    if (articleEl) articleEl.focus();
+  }, 50);
+}
+function renderColoristFourLines(targetId = 'dash-colorist-four-lines') {
+  const el = document.getElementById(targetId);
+  if (!el) return;
+  el.innerHTML = [1, 2, 3, 4].map(line => {
+    const active = lineRuns.find(r => normalizeLineKey(r.line) === String(line) && !r.endTs);
+    const orders = getOpenOrdersForLine(line);
+    const lock = coloristLocks && coloristLocks[line];
+    const lockText = lock && lock.active ? `🔒 ${escapeHtmlProd(lock.byName || 'занято')}` : '🔓 свободна';
+    const main = active
+      ? `<div class="text-[10px] font-black text-emerald-700 truncate">▶ ${escapeHtmlProd(active.article)}</div><div class="text-[9px] text-emerald-600">линия работает</div>`
+      : `<div class="text-[10px] font-bold text-gray-600">${orders.length ? `📋 ${orders.length} артикул(а) в очереди` : 'нет открытых артикулов'}</div><div class="text-[9px] text-gray-400">${lockText}</div>`;
+    return `<div class="border ${active ? 'border-emerald-200 bg-emerald-50' : 'border-gray-100 bg-gray-50'} rounded-xl p-3 space-y-1.5">
+      <div class="flex items-center justify-between"><span class="text-[11px] font-black text-gray-800">Линия ${line}</span><span class="text-[9px] text-gray-400">${lockText}</span></div>
+      ${main}
+      <button onclick="openColoristLine(${line})" class="w-full bg-blue-600 text-white py-2 rounded-lg text-[9px] font-black uppercase">🎨 Открыть работу линии ${line}</button>
+    </div>`;
+  }).join('');
+}
+function selectLeadLine(line) {
+  const sel = document.getElementById('dash-linerun-line-lead');
+  if (sel) { sel.value = String(line); renderLineRunCard('lead'); }
+}
+function renderLeadFourLines() {
+  const el = document.getElementById('dash-lead-four-lines');
+  if (!el) return;
+  el.innerHTML = [1, 2, 3, 4].map(line => {
+    const active = lineRuns.find(r => normalizeLineKey(r.line) === String(line) && !r.endTs);
+    const orders = getOpenOrdersForLine(line);
+    const content = active
+      ? `<div class="text-[10px] font-black text-emerald-700 truncate">▶ ${escapeHtmlProd(active.article)}</div><div class="text-[9px] text-emerald-600">в работе</div>`
+      : `<div class="text-[10px] font-bold text-gray-600">${orders.length ? `📋 ${orders.length} в очереди` : 'простаивает'}</div><div class="text-[9px] text-gray-400">готова к запуску</div>`;
+    return `<div class="border ${active ? 'border-emerald-200 bg-emerald-50' : 'border-gray-100 bg-gray-50'} rounded-xl p-3 space-y-1.5">
+      <div class="text-[11px] font-black text-gray-800">Линия ${line}</div>${content}
+      <button onclick="selectLeadLine(${line})" class="w-full bg-amber-600 text-white py-2 rounded-lg text-[9px] font-black uppercase">Открыть управление</button>
+    </div>`;
+  }).join('');
+}
 // Список артикулов в поле «Артикул» на вкладке «Колорист»: как только
 // выбрана линия, подставляем туда (через <datalist>) все ещё не завершённые
 // артикулы плана, которые «забиты» на эту линию — из файла, загруженного
@@ -13131,6 +13205,7 @@ async function handleOrdersExcelImport(evt, statusElId) {
     // повторном импорте файла в течение дня (задание может меняться
     // несколько раз за смену) — сравниваем по линии+артикулу+количеству.
     const existingKeys = new Set(productionOrders.map(o => `${(o.line || '').trim()}|${(o.article || '').trim()}|${o.qty}`));
+    const orderIdsBeforeImport = new Set(productionOrders.map(o => o.id));
 
     const multiBlockOrders = parseMultiBlockOrdersSheet(sheet);
     if (multiBlockOrders) {
@@ -13176,11 +13251,15 @@ async function handleOrdersExcelImport(evt, statusElId) {
         added++;
       });
     }
+    productionOrdersPendingCloudIds = new Set(productionOrders
+      .filter(o => !orderIdsBeforeImport.has(o.id))
+      .map(o => o.id));
     saveProductionOrders(productionOrders);
     renderOrdersList();
     // Меняем ревизию до первого await: уже выполняющийся старый облачный
     // запрос после этого импорта больше не имеет права заменить наш план.
     productionOrdersRevision++;
+    productionOrdersIgnoreRemoteUntil = Date.now() + 60000;
     productionOrdersCloudSyncing = true;
     try {
       await syncArrayToCloud('productionOrders', productionOrders);
@@ -15474,6 +15553,7 @@ function buildRecipeObject(idOverride) {
     id: idOverride || Date.now(),
     name: name,
     article: document.getElementById('article').value,
+    line: (document.getElementById('colorist-line') || {}).value || null,
     master: (document.getElementById('master-name') ? document.getElementById('master-name').value : '').trim() || (currentUserProfile ? currentUserProfile.name : ''),
     savedByRole: currentUserProfile ? currentUserProfile.role : null,
     client: (document.getElementById('client-name') ? document.getElementById('client-name').value : '').trim(),
@@ -15584,7 +15664,7 @@ function renderRecipesList(list, query = '') {
         ${r.hex ? `<span class="w-8 h-8 rounded-full border border-gray-200 shrink-0 mt-0.5" style="background:${r.hex}" title="Цвет эталона на момент сохранения"></span>` : ''}
         <div class="flex-1 cursor-pointer" onclick="loadRecipeIntoForm(${r.id})">
           <div class="font-bold">${r.name}${r.needsReview ? ' <span class=\"text-[9px] bg-red-100 text-red-700 rounded-full px-2 py-0.5 align-middle\">⚠️ высокое ΔE — проверить</span>' : ''}</div>
-          <div class="text-xs text-gray-500">${r.date}${r.article ? ' · Арт. ' + r.article : ''}${r.dE != null ? ' · ΔE ' + r.dE : ''}</div>
+          <div class="text-xs text-gray-500">${r.date}${r.line ? ' · Линия ' + r.line : ''}${r.article ? ' · Арт. ' + r.article : ''}${r.dE != null ? ' · ΔE ' + r.dE : ''}</div>
           ${(r.master || r.client) ? `<div class="text-[10px] text-gray-400 mt-0.5">${r.master ? '👤 ' + r.master : ''}${r.master && r.client ? ' · ' : ''}${r.client ? '🏷 ' + r.client : ''}</div>` : ''}
           <div class="text-sm mt-1">Ц:${r.cyan} М:${r.magenta} Ж:${r.yellow} К:${r.red} Ч:${r.black} О:${r.orange||0} Гр:${r.grandal||0}</div>
           ${r.comment ? `<div class="text-xs text-amber-700 bg-amber-50 rounded-lg px-2 py-1 mt-1.5 italic">📝 ${r.comment}</div>` : ''}
@@ -15611,6 +15691,10 @@ function loadRecipeIntoForm(id) {
     if (el) el.value = r[k] || 0;
   });
   if (r.article) document.getElementById('article').value = r.article;
+  if (document.getElementById('colorist-line') && r.line) {
+    document.getElementById('colorist-line').value = String(r.line);
+    renderColoristArticleOptions();
+  }
   document.getElementById('name').value = r.name || '';
   if (document.getElementById('recipe-comment')) document.getElementById('recipe-comment').value = r.comment || '';
   if (document.getElementById('master-name')) document.getElementById('master-name').value = r.master || '';
