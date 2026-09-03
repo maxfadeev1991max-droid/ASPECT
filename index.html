@@ -4439,8 +4439,10 @@ async function checkPaintAlertOnce() {
       savePlannedMaintenance(plannedMaintenance);
       shiftReports = Array.isArray(remote.shiftReports) ? remote.shiftReports : shiftReports;
       saveShiftReports(shiftReports);
-      lineRuns = Array.isArray(remote.lineRuns) ? remote.lineRuns : lineRuns;
-      saveLineRuns(lineRuns);
+      if (!lineRunsCloudSyncing) {
+        lineRuns = Array.isArray(remote.lineRuns) ? remote.lineRuns : lineRuns;
+        saveLineRuns(lineRuns);
+      }
       if (typeof renderAllLinesStatus === 'function') renderAllLinesStatus();
       const role = currentUserProfile && currentUserProfile.role;
       if (role === 'upp_master') renderOrdersList();
@@ -11897,6 +11899,12 @@ function saveLineRuns(list) {
 }
 let shiftReports = loadShiftReports();
 let lineRuns = loadLineRuns();
+// Пока свежий забег линии ещё отправляется в облако (см. startLineRun/
+// stopLineRun/updateLineRunSpeed), опрос checkPaintAlertOnce не должен
+// затирать локальный lineRuns устаревшим снимком, который ещё не видит
+// эту отправку — иначе только что начатый забег «слетает» через пару
+// секунд (гонка между push и очередным poll).
+let lineRunsCloudSyncing = false;
 const BITRIX_CONFIG_KEY = 'colorist_bitrix_config';
 function loadBitrixConfig() {
   try { return JSON.parse(localStorage.getItem(BITRIX_CONFIG_KEY) || 'null') || {}; } catch (e) { return {}; }
@@ -12792,8 +12800,9 @@ function startLineRun(prefix) {
   if (lineRuns.some(r => String(r.line) === line && !r.endTs)) { toast('На этой линии уже идёт учёт хода — сначала завершите текущий артикул.'); return; }
   lineRuns.push({ id: 'lr' + Date.now(), line, article, startTs: Date.now(), endTs: null, speedMPerMin: isNaN(speed) ? null : speed, offsetMeters, meters: 0, rolls: 0, pallets: 0, createdBy: currentUserProfile.name, role: currentUserProfile.role });
   saveLineRuns(lineRuns);
-  syncArrayToCloud('lineRuns', lineRuns);
   renderLineRunCard(prefix);
+  lineRunsCloudSyncing = true;
+  syncArrayToCloud('lineRuns', lineRuns).finally(() => { lineRunsCloudSyncing = false; });
 }
 function updateLineRunSpeed(prefix, id) {
   const run = lineRuns.find(r => r.id === id);
@@ -12803,8 +12812,9 @@ function updateLineRunSpeed(prefix, id) {
   if (isNaN(val)) return;
   run.speedMPerMin = val;
   saveLineRuns(lineRuns);
-  syncArrayToCloud('lineRuns', lineRuns);
   renderLineRunCard(prefix);
+  lineRunsCloudSyncing = true;
+  syncArrayToCloud('lineRuns', lineRuns).finally(() => { lineRunsCloudSyncing = false; });
 }
 function stopLineRun(prefix, id) {
   const run = lineRuns.find(r => r.id === id);
@@ -12816,7 +12826,8 @@ function stopLineRun(prefix, id) {
   run.rolls = Math.round(run.meters / METERS_PER_ROLL * 10) / 10;
   run.pallets = Math.round(run.rolls / ROLLS_PER_PALLET * 100) / 100;
   saveLineRuns(lineRuns);
-  syncArrayToCloud('lineRuns', lineRuns);
+  lineRunsCloudSyncing = true;
+  syncArrayToCloud('lineRuns', lineRuns).finally(() => { lineRunsCloudSyncing = false; });
   // Если в плане заказов есть подходящий (тот же артикул, та же или не
   // указанная линия, ещё не выполнен) — сразу засчитываем метраж туда.
   const order = findOrderForRun(run.line, run.article);
