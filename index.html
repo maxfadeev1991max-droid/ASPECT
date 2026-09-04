@@ -474,6 +474,22 @@
     .app-toast.toast-success { background: linear-gradient(135deg, #0fa96e, #0b7a55); }
     .app-toast.toast-error   { background: linear-gradient(135deg, #e0524f, #b8302e); }
     .app-toast.toast-info    { background: linear-gradient(135deg, var(--aspect-teal-dark), var(--aspect-teal-darker)); }
+    /* Отдельный, более заметный вид уведомления о новом сообщении в чате —
+       крупнее обычного toast, с именем отправителя и текстом сообщения,
+       кликабельный (открывает чат), с лёгкой "пульсацией" рамки, чтобы
+       точно бросался в глаза даже среди других уведомлений на экране. */
+    .app-toast.toast-chat {
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      cursor: pointer; padding: 0.9rem 1rem;
+      box-shadow: 0 16px 36px -8px rgba(37,99,235,0.55), 0 0 0 2px rgba(255,255,255,0.25);
+      animation: toastIn .4s cubic-bezier(.2,.9,.25,1.2) both, chatToastPulse 1.6s ease-in-out 0.4s 2;
+    }
+    .app-toast.toast-chat .toast-chat-name { font-size: 11px; text-transform: uppercase; opacity: .85; margin-bottom: 2px; }
+    .app-toast.toast-chat .toast-chat-text { font-size: 13.5px; font-weight: 700; }
+    @keyframes chatToastPulse {
+      0%, 100% { box-shadow: 0 16px 36px -8px rgba(37,99,235,0.55), 0 0 0 2px rgba(255,255,255,0.25); }
+      50% { box-shadow: 0 16px 36px -8px rgba(37,99,235,0.85), 0 0 0 5px rgba(255,255,255,0.45); }
+    }
     .app-toast .toast-icon { font-size: 16px; line-height: 1; flex-shrink: 0; margin-top: 1px; }
     .app-toast .toast-close { margin-left: auto; opacity: .65; flex-shrink: 0; font-size: 11px; padding-left: 6px; }
     @keyframes toastIn { 0% { opacity: 0; transform: translateY(-16px) scale(.9); } 70% { transform: translateY(2px) scale(1.02); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
@@ -705,6 +721,128 @@
       .help-item-question { font-size:.86rem; }
       .help-item-answer { font-size:.8rem; max-width: 70rem; }
     }
+
+    /* ============================================================
+       ДОРАБОТКА АНИМАЦИИ — фаза 2 (единый фирменный слой поверх всего,
+       что уже есть выше). Тот же приём: переопределяем поведение через
+       общие/атрибутные CSS-селекторы, ничего не переписывая в разметке
+       тысяч экранов — только расширяем то, что уже начато (tabIconPop,
+       fadeInUp, modalPop, toast, colorist-loader) на весь интерфейс.
+       ============================================================ */
+
+    /* --- Переходы между экранами: расширяем фейд на ВСЕ вкладки разом
+       (было только 6 из 10) через атрибутный селектор id^="view-" —
+       так любой новый экран автоматически получит анимацию появления. */
+    [id^="view-"]:not(.hidden) {
+      animation: aspectScreenIn .38s cubic-bezier(.22,.85,.28,1) both;
+    }
+    @keyframes aspectScreenIn {
+      from { opacity: 0; transform: translateY(10px) scale(.985); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      [id^="view-"]:not(.hidden), .aspect-ripple, #recipes > div, #correction-history-list > div, #stats-content > div,
+      [id$="-list"] > *, [id$="-content"] > *, [id$="-log"] > *, [id$="-panel"] > *:not(.hidden) { animation: none !important; }
+    }
+
+    /* --- Стаггерное появление карточек расширяем на ВСЕ списки/панели
+       приложения (Дашборд, Панель, Пигменты, Обучение, Производство,
+       Контроль брака, Чат и т.д.), а не только 3 экрана, где это было
+       прописано вручную. Работает по общему суффиксу id, поэтому не
+       нужно перечислять каждый конкретный контейнер поимённо. */
+    [id$="-list"] > *, [id$="-content"] > *, [id$="-log"] > * {
+      animation: fadeInUp .36s cubic-bezier(.2,.8,.2,1) both;
+    }
+    [id$="-list"] > *:nth-child(1),  [id$="-content"] > *:nth-child(1),  [id$="-log"] > *:nth-child(1)  { animation-delay: .00s; }
+    [id$="-list"] > *:nth-child(2),  [id$="-content"] > *:nth-child(2),  [id$="-log"] > *:nth-child(2)  { animation-delay: .035s; }
+    [id$="-list"] > *:nth-child(3),  [id$="-content"] > *:nth-child(3),  [id$="-log"] > *:nth-child(3)  { animation-delay: .07s; }
+    [id$="-list"] > *:nth-child(4),  [id$="-content"] > *:nth-child(4),  [id$="-log"] > *:nth-child(4)  { animation-delay: .105s; }
+    [id$="-list"] > *:nth-child(5),  [id$="-content"] > *:nth-child(5),  [id$="-log"] > *:nth-child(5)  { animation-delay: .14s; }
+    [id$="-list"] > *:nth-child(6),  [id$="-content"] > *:nth-child(6),  [id$="-log"] > *:nth-child(6)  { animation-delay: .175s; }
+    [id$="-list"] > *:nth-child(7),  [id$="-content"] > *:nth-child(7),  [id$="-log"] > *:nth-child(7)  { animation-delay: .21s; }
+    [id$="-list"] > *:nth-child(n+8),[id$="-content"] > *:nth-child(n+8),[id$="-log"] > *:nth-child(n+8) { animation-delay: .24s; }
+    /* Небольшие информационные панели (появляются/скрываются целиком, не списком) */
+    [id$="-panel"] > *:not(.hidden) { animation: fadeInUp .3s cubic-bezier(.2,.8,.2,1) both; }
+
+    /* --- Карточки: лёгкий "подъём" при наведении (десктоп/мышь) и явное
+       нажатие пальцем (телефон), поверх уже заданной тени var(--shadow-card). */
+    .bg-white.rounded-2xl, .bg-white.rounded-3xl, .bg-white.rounded-xl {
+      transition: box-shadow .22s ease, transform .18s ease, border-color .22s ease;
+    }
+    @media (hover: hover) {
+      .bg-white.rounded-2xl:hover, .bg-white.rounded-3xl:hover, .bg-white.rounded-xl:hover {
+        box-shadow: var(--shadow-card-lg);
+        transform: translateY(-2px);
+      }
+    }
+    .bg-white.rounded-2xl:active, .bg-white.rounded-3xl:active, .bg-white.rounded-xl:active { transform: scale(0.992); }
+
+    /* --- "Дорогие" кнопки-действия: лёгкий блик, пробегающий при наведении,
+       плюс поддержка ripple-эффекта (кружок расходится из точки тапа —
+       см. скрипт aspectRipple ниже). */
+    button.bg-blue-700, button.bg-blue-600, button.bg-emerald-600, button.bg-emerald-500,
+    button.bg-red-600, button.bg-red-700, button.bg-amber-600, button.bg-amber-500 {
+      position: relative;
+      overflow: hidden;
+      transition: box-shadow .22s ease, transform .16s cubic-bezier(.3,.7,.4,1.5), filter .2s ease;
+    }
+    button.bg-blue-700:active, button.bg-blue-600:active, button.bg-emerald-600:active, button.bg-emerald-500:active,
+    button.bg-red-600:active, button.bg-red-700:active, button.bg-amber-600:active, button.bg-amber-500:active {
+      transform: scale(0.96);
+    }
+    @media (hover: hover) {
+      button.bg-blue-700:hover, button.bg-blue-600:hover { filter: brightness(1.06); }
+    }
+    .aspect-ripple {
+      position: absolute; border-radius: 9999px; background: rgba(255,255,255,0.55);
+      transform: scale(0); pointer-events: none; animation: aspectRippleAnim .55s ease-out forwards;
+    }
+    @keyframes aspectRippleAnim { to { transform: scale(1); opacity: 0; } }
+
+    /* --- Иконка-успех в toast: короткий "поп" вместо статичного появления */
+    @keyframes aspectIconPop { 0% { transform: scale(.3) rotate(-12deg); opacity: 0; } 60% { transform: scale(1.18) rotate(4deg); } 100% { transform: scale(1) rotate(0); opacity: 1; } }
+    .app-toast .toast-icon { animation: aspectIconPop .42s cubic-bezier(.3,1.4,.5,1) both; display: inline-block; }
+
+    /* --- Чипы/бейджи с "живым" акцентом (счётчики заявок, непрочитанные) —
+       мягкая пульсация, чтобы взгляд сам зацепился за то, что требует внимания. */
+    .tab-badge { animation: aspectBadgePulse 1.8s ease-in-out infinite; }
+    @keyframes aspectBadgePulse {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 0 2px var(--aspect-surface-2, #fff), 0 0 0 0 rgba(220,38,38,0.55); }
+      50%      { transform: scale(1.12); box-shadow: 0 0 0 2px var(--aspect-surface-2, #fff), 0 0 0 5px rgba(220,38,38,0); }
+    }
+
+    /* --- Переключатели (чекбоксы/тогглы): небольшая пружинка на переключении,
+       чтобы состояние ощущалось "физически", а не просто менялось цветом. */
+    input[type="checkbox"] { transition: transform .15s cubic-bezier(.3,1.6,.5,1); }
+    input[type="checkbox"]:active { transform: scale(0.88); }
+    label:has(> input[type="checkbox"]:checked), .toggle-row.is-on { animation: aspectTogglePop .28s cubic-bezier(.3,1.6,.5,1); }
+    @keyframes aspectTogglePop { 0% { transform: scale(1); } 45% { transform: scale(1.015); } 100% { transform: scale(1); } }
+
+    /* --- AI-панели (Оптимизатор, чат-подсказки): тонкое "дышащее" бирюзовое
+       свечение по краю, чтобы визуально отличать их как "живой" ИИ-блок,
+       а не обычную карточку с данными. */
+    .ai-panel { position: relative; }
+    .ai-panel::before {
+      content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px;
+      background: linear-gradient(120deg, rgba(20,163,179,0.55), rgba(217,70,239,0.25), rgba(20,163,179,0.55));
+      background-size: 220% 220%;
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor; mask-composite: exclude;
+      opacity: .55; pointer-events: none;
+      animation: aspectAiGlow 5s ease-in-out infinite;
+    }
+    @keyframes aspectAiGlow { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+
+    /* --- Компас отклонения / AR-стрелка: более отзывчивый поворот с лёгкой
+       "пружинкой", а не мгновенный прыжок в новое положение. */
+    .live-ar-vector-arrow { transition: transform .32s cubic-bezier(.22,1.3,.36,1), fill .2s ease; }
+
+    /* --- Photo/фото-сравнение "было/стало": плавное появление при переключении
+       режима бок-о-бок / внахлёст, чтобы смена не была резкой. */
+    #photo-compare-panel > div { animation: fadeInUp .3s ease both; }
+
+    /* --- Модалки: небольшая инерция фона при открытии (было мгновенное затемнение) */
+    #duplicate-article-modal, .modal-overlay { transition: background-color .22s ease; }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen pb-20 transition-all duration-500" id="main-body">
@@ -1396,6 +1534,13 @@
               <div id="colorist-article-dropdown" class="hidden absolute z-20 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto bg-white rounded-2xl shadow-lg border border-gray-100"></div>
             </div>
         </div>
+        <!-- Подсказка «как это уже колеровали»: как только артикул совпал с
+             тем, что уже есть в архиве (Библиотека), показываем не только
+             тихую автоподстановку навесок (см. autofillByArticle), но и
+             видимую карточку — сколько раз красили, кто мешал в прошлый раз,
+             навески, лоты, основа и комментарий (в т.ч. заметки начальника
+             смены) — чтобы новый мастер колеровал так же, а не с нуля. -->
+        <div id="article-history-hint" class="hidden"></div>
         <div class="grid grid-cols-2 gap-3">
             <input type="text" id="master-name" placeholder="Мастер (кто замешивал)" class="p-4 bg-gray-50 rounded-2xl outline-none font-bold text-sm border border-transparent focus:border-blue-300">
             <div class="flex gap-1.5">
@@ -1652,6 +1797,41 @@
       </div>
       <input type="text" id="paint-stats-name-input" placeholder="Ваше имя (колорист)" oninput="onPaintStatsNameInput()" class="w-full p-3 bg-gray-50 rounded-2xl outline-none font-bold text-sm border border-transparent focus:border-blue-300">
       <div id="paint-stats-content"></div>
+    </div>
+
+    <!-- ===== Статистика смены — видна только начальнику смены =====
+         Простои, брак, выработка/скорость и чек-листы за смены, плюс
+         многодневный тренд по колористам (в отличие от блока на «Панели»,
+         который считает только текущую 12-часовую смену). Всё строится по
+         данным, которые уже синхронизируются через общую базу — новых
+         источников данных не требуется, кроме чек-листов приладки (см.
+         PRELAUNCH_LOG ниже — раньше жили только в localStorage одного
+         устройства, теперь тоже уходят в облако). -->
+    <div id="lead-stats-section" class="hidden space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-black text-gray-800 uppercase">📊 Статистика смены</h3>
+        <select id="lead-stats-period" onchange="renderLeadStatsSection()" class="text-[10px] p-2 bg-gray-50 rounded-xl outline-none font-bold">
+          <option value="7" selected>За 7 дней</option>
+          <option value="30">За 30 дней</option>
+          <option value="90">За 90 дней</option>
+        </select>
+      </div>
+
+      <div class="bg-slate-900 rounded-2xl p-4 space-y-2 text-white">
+        <div class="text-[10px] font-black uppercase text-blue-300">💬 Спросить статистику</div>
+        <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Быстрые готовые ответы по ключевым словам — без интернета и без ИИ. Например: «брак по линиям», «простои за неделю», «чек-листы», «скорость», «колористы».</p>
+        <div class="flex gap-2">
+          <input type="text" id="lead-stats-ask-input" placeholder="Напишите вопрос…" class="flex-1 p-2.5 bg-white/10 rounded-xl outline-none text-[11px] font-bold placeholder:text-gray-400" onkeydown="if(event.key==='Enter'){askLeadStats();}">
+          <button onclick="askLeadStats()" class="bg-blue-600 px-4 rounded-xl font-black text-[10px] uppercase shrink-0">→</button>
+        </div>
+        <div id="lead-stats-ask-answer" class="hidden bg-white/10 rounded-xl p-3 text-[11px] leading-relaxed"></div>
+      </div>
+
+      <div id="lead-stats-downtime" class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2"></div>
+      <div id="lead-stats-defects" class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2"></div>
+      <div id="lead-stats-output" class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2"></div>
+      <div id="lead-stats-checklist" class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2"></div>
+      <div id="lead-stats-colorists" class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2"></div>
     </div>
 
     <div id="stats-content" class="space-y-4"></div>
@@ -2283,8 +2463,35 @@
       <div id="dash-lead-colorist-four-lines" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
     </div>
     <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="flex items-center justify-between gap-2">
+        <div class="text-[10px] font-black uppercase text-gray-500">⏱ Колористы за эту смену — успевают ли</div>
+        <span id="dash-lead-colorist-stats-queue-badge" class="text-[9px] font-black text-gray-400"></span>
+      </div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">По заявкам «Нужна краска»: кто сейчас наливает, сколько уже закрыл заявок и сколько в среднем занимает ожидание и сам налив.</p>
+      <div id="dash-lead-colorist-stats"></div>
+    </div>
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
       <div class="text-[10px] font-black uppercase text-gray-500">🏭 Все 4 линии · управление сменой</div>
       <div id="dash-lead-four-lines" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+    </div>
+
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">🚀 Скорость под план смены</div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Смена — 12 часов: дневная 08:00–20:00, ночная 20:00–08:00. Приложение само считает, сколько уже сделано на всех линиях с начала текущей смены (по данным «Линия поехала»/«Артикул закончен»), и какую скорость нужно держать до конца смены, чтобы успеть план.</p>
+      <div class="grid grid-cols-2 gap-2">
+        <input type="number" id="dash-shiftspeed-target" placeholder="План, рул. за смену" oninput="onShiftSpeedInputChange()" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+        <input type="number" id="dash-shiftspeed-lines" placeholder="Линий в работе" min="1" max="4" oninput="onShiftSpeedInputChange()" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+      </div>
+      <div id="dash-shiftspeed-result"></div>
+    </div>
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">🚨 Брак за смену</div>
+      <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Введите брак по факту, рулонами — % посчитается сам от того, что уже сделано на всех линиях с начала текущей смены. Значение автоматически подставится и в форму закрытия смены на вкладке «Производство».</p>
+      <div class="grid grid-cols-2 gap-2">
+        <input type="number" id="dash-shiftdefect-rolls" placeholder="Брак, рул." oninput="onShiftDefectInput()" class="p-2.5 bg-gray-50 rounded-xl outline-none text-[11px] font-bold">
+        <div class="p-2.5 bg-gray-50 rounded-xl text-[10px] font-bold text-gray-400 flex items-center gap-1">≈ <span id="dash-shiftdefect-meters">0</span> м</div>
+      </div>
+      <div id="dash-shiftdefect-result"></div>
     </div>
     <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2">
       <div class="text-[10px] font-black uppercase text-gray-500">📥 Импорт плана из Excel</div>
@@ -2902,6 +3109,33 @@ function toast(message, type) {
   return undefined;
 }
 
+// ===== Ripple-эффект на всех основных кнопках-действиях (bg-blue-700 и т.п.) =====
+// Единый делегированный обработчик — работает на всех экранах и на кнопках,
+// которые появляются в разметке позже (списки, модалки), без необходимости
+// вешать слушатель на каждую кнопку по отдельности.
+(function () {
+  const RIPPLE_SELECTOR = 'button.bg-blue-700, button.bg-blue-600, button.bg-emerald-600, button.bg-emerald-500, button.bg-red-600, button.bg-red-700, button.bg-amber-600, button.bg-amber-500';
+  function spawnRipple(btn, x, y) {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const rect = btn.getBoundingClientRect();
+    const size = Math.max(rect.width, rect.height) * 1.3;
+    const ripple = document.createElement('span');
+    ripple.className = 'aspect-ripple';
+    ripple.style.width = ripple.style.height = size + 'px';
+    ripple.style.left = (x - rect.left - size / 2) + 'px';
+    ripple.style.top = (y - rect.top - size / 2) + 'px';
+    btn.appendChild(ripple);
+    setTimeout(() => ripple.remove(), 600);
+  }
+  document.addEventListener('click', function (e) {
+    const btn = e.target.closest(RIPPLE_SELECTOR);
+    if (!btn || btn.disabled) return;
+    const cx = (e.clientX || 0) || (btn.getBoundingClientRect().left + btn.getBoundingClientRect().width / 2);
+    const cy = (e.clientY || 0) || (btn.getBoundingClientRect().top + btn.getBoundingClientRect().height / 2);
+    spawnRipple(btn, cx, cy);
+  }, true);
+})();
+
 // Плавно анимирует число от 0 (или текущего значения) до целевого — используется
 // в блоке «Статистика», чтобы крупные цифры не просто "выскакивали", а считались.
 function animateCountUp(el, target, duration) {
@@ -3311,6 +3545,7 @@ async function fetchCloudSnapshot() {
     plannedMaintenance: Array.isArray(data.plannedMaintenance) ? data.plannedMaintenance : [],
     shiftReports: Array.isArray(data.shiftReports) ? data.shiftReports : [],
     lineRuns: Array.isArray(data.lineRuns) ? data.lineRuns : [],
+    prelaunchLog: Array.isArray(data.prelaunchLog) ? data.prelaunchLog : [],
     baseMultipliers: data.baseMultipliers || {},
     lotMultipliers: data.lotMultipliers || {},
     pigmentLotMultipliers: data.pigmentLotMultipliers || {}
@@ -3995,6 +4230,10 @@ function applyIncomingChat(newChat) {
         ? ((isDm ? '✉️ ' : '💬 ') + (last.name || 'Коллега') + (isDm ? ' (лично)' : ''))
         : ('💬 ' + incoming.length + ' новых сообщения');
       firePushNotification(title, last.text || '');
+      // Крупный кликабельный тост на экране — виден всегда, даже если
+      // системные push-уведомления не разрешены в браузере.
+      const toastText = incoming.length === 1 ? (last.text || '') : (incoming.length + ' новых сообщения: «' + (last.text || '') + '»');
+      showChatNotificationToast(last.name, roleShortLabel(last.role), toastText, isDm);
     }
   }
   const maxTs = list.reduce((m, x) => Math.max(m, (x && x.ts) || 0), chatLastNotifiedTs);
@@ -4215,7 +4454,57 @@ function renderChatMessages() {
   }).join('');
   wrap.scrollTop = wrap.scrollHeight;
 }
+// Короткий, мягкий сигнал для нового сообщения в чате — отличается от
+// тревожного playPaintAlertSound() (тот — про простой линии), здесь просто
+// два негромких коротких сигнала + вибрация, чтобы не раздражать при
+// частой переписке, но было слышно и заметно.
+let chatNotifyAudioCtx = null;
+function playChatNotifySound() {
+  try {
+    if (!chatNotifyAudioCtx) chatNotifyAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (chatNotifyAudioCtx.state === 'suspended') chatNotifyAudioCtx.resume().catch(() => {});
+    [[0, 0.11, 740], [0.14, 0.13, 980]].forEach(([delay, dur, freq]) => {
+      const osc = chatNotifyAudioCtx.createOscillator();
+      const gain = chatNotifyAudioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      osc.connect(gain); gain.connect(chatNotifyAudioCtx.destination);
+      const t0 = chatNotifyAudioCtx.currentTime + delay;
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.5, t0 + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      osc.start(t0); osc.stop(t0 + dur + 0.03);
+    });
+  } catch (e) {}
+  if (navigator.vibrate) { try { navigator.vibrate([120, 60, 120]); } catch (e) {} }
+}
+// Крупное, кликабельное уведомление о новом сообщении — показывается поверх
+// всего интерфейса (тот же слой toast-stack, что и обычные toast(), но
+// заметно крупнее и со своей пульсацией), плюс звук/вибрация выше и
+// системный Notification (firePushNotification) — на случай, если экран
+// сейчас выключен или приложение свёрнуто.
+function showChatNotificationToast(senderName, roleLabel, text, isDm) {
+  const stack = document.getElementById('toast-stack');
+  if (!stack) return;
+  const el = document.createElement('div');
+  el.className = 'app-toast toast-chat';
+  const icon = isDm ? '✉️' : '💬';
+  const nameLine = escapeHtmlProd(senderName || 'Коллега') + (roleLabel ? ' · ' + escapeHtmlProd(roleLabel) : '') + (isDm ? ' (лично)' : '');
+  el.innerHTML = `<span class="toast-icon">${icon}</span><span class="min-w-0"><div class="toast-chat-name">${nameLine}</div><div class="toast-chat-text"></div></span><span class="toast-close">✕</span>`;
+  el.querySelector('.toast-chat-text').textContent = text || '';
+  const remove = () => {
+    if (!el.isConnected) return;
+    el.classList.add('toast-out');
+    setTimeout(() => el.remove(), 260);
+  };
+  el.querySelector('.toast-close').addEventListener('click', (e) => { e.stopPropagation(); remove(); });
+  el.addEventListener('click', () => { remove(); openChatModal(); });
+  stack.appendChild(el);
+  setTimeout(remove, 7000);
+  playChatNotifySound();
+}
 async function pollChatOnce() {
+
   const cfg = sheetDbConfig || loadSheetDbConfig();
   if (!cfg || !cfg.url) return;
   try {
@@ -4475,6 +4764,7 @@ async function checkPaintAlertOnce() {
       if (!productionOrdersCloudSyncing && remoteHasPendingOrders && ordersRevisionAtFetch === productionOrdersRevision) {
         productionOrders = remoteOrders || productionOrders;
         productionOrdersPendingCloudIds.clear();
+        savePendingIdSet(PRODUCTION_ORDERS_PENDING_KEY, productionOrdersPendingCloudIds);
         saveProductionOrders(productionOrders);
         if (typeof renderColoristArticleOptions === 'function') renderColoristArticleOptions();
       }
@@ -4484,6 +4774,8 @@ async function checkPaintAlertOnce() {
       savePlannedMaintenance(plannedMaintenance);
       shiftReports = Array.isArray(remote.shiftReports) ? remote.shiftReports : shiftReports;
       saveShiftReports(shiftReports);
+      prelaunchLog = Array.isArray(remote.prelaunchLog) ? remote.prelaunchLog : prelaunchLog;
+      savePrelaunchLog(prelaunchLog);
       if (!lineRunsCloudSyncing) {
         const remoteLineRuns = Array.isArray(remote.lineRuns) ? remote.lineRuns : null;
         // Не принимаем снимок, пока облако реально не подтвердило именно
@@ -4498,6 +4790,7 @@ async function checkPaintAlertOnce() {
         if (lineRunsPendingConfirmed && lineRunsRevisionAtFetch === lineRunsRevision) {
           lineRuns = remoteLineRuns || lineRuns;
           lineRunsPendingCloudIds.clear();
+          savePendingIdSet(LINE_RUNS_PENDING_KEY, lineRunsPendingCloudIds);
           saveLineRuns(lineRuns);
         }
       }
@@ -4505,7 +4798,11 @@ async function checkPaintAlertOnce() {
       const role = currentUserProfile && currentUserProfile.role;
       if (role === 'upp_master') renderOrdersList();
       if (role === 'senior_printer') renderLineRunCard('printer', true);
-      if (role === 'shift_lead') { renderLeadFourLines(); renderColoristFourLines('dash-lead-colorist-four-lines'); renderLineRunCard('lead', true); }
+      if (role === 'shift_lead') {
+        renderLeadFourLines(); renderColoristFourLines('dash-lead-colorist-four-lines'); renderLeadColoristStats(); renderLineRunCard('lead', true); renderShiftSpeedPlan(); renderShiftDefectLive();
+        const statsView = document.getElementById('view-stats');
+        if (statsView && !statsView.classList.contains('hidden')) renderLeadStatsSection();
+      }
       if (role === 'colorist') renderColoristFourLines();
       if ((role === 'production_director' || role === 'shop_chief' || role === 'general_director') && document.getElementById('view-dashboard') && !document.getElementById('view-dashboard').classList.contains('hidden')) {
         renderDirectorDashboard();
@@ -4976,7 +5273,90 @@ function renderPaintRequestStats() {
   `;
 }
 
-// Печатник видит форму + свои последние заявки; колорист/начальник смены —
+// ===== Обзор для начальника смены: как справляются колористы прямо сейчас =====
+// В отличие от renderPaintRequestStats (личная статистика, где колорист сам
+// вписывает своё имя), этот блок считает данные сразу по ВСЕМ колористам,
+// которые были активны за последнюю смену (12 часов) — начальнику смены не
+// нужно никого искать по имени, он просто открывает свою панель и видит,
+// кто сейчас наливает, сколько уже закрыл заявок и не завис ли кто-то на
+// одной заявке дольше порога простоя (тот же порог, что и в очереди заявок).
+const LEAD_COLORIST_STATS_WINDOW_MS = 12 * 60 * 60 * 1000;
+function renderLeadColoristStats() {
+  const el = document.getElementById('dash-lead-colorist-stats');
+  const badge = document.getElementById('dash-lead-colorist-stats-queue-badge');
+  if (!el) return;
+  const now = Date.now();
+  const cutoff = now - LEAD_COLORIST_STATS_WINDOW_MS;
+  const pending = (paintRequests || []).filter(r => r.status === 'pending');
+  const pendingOverdue = pending.filter(r => (now - r.ts) > PAINT_REQUEST_OVERDUE_MS);
+  if (badge) {
+    badge.textContent = pending.length
+      ? `в очереди: ${pending.length}${pendingOverdue.length ? ` · просрочено: ${pendingOverdue.length}` : ''}`
+      : 'очередь пуста';
+    badge.className = 'text-[9px] font-black ' + (pendingOverdue.length ? 'text-red-600' : 'text-gray-400');
+  }
+  const relevant = (paintRequests || []).filter(r => {
+    const lastTs = Math.max(r.ts || 0, r.inProgressTs || 0, r.doneTs || 0);
+    return lastTs >= cutoff && (r.status === 'done' || r.status === 'in_progress');
+  });
+  const byName = new Map(); // ключ — имя в нижнем регистре, значение — {displayName, done:[], active:null}
+  relevant.forEach(r => {
+    const rawName = r.status === 'done' ? r.doneBy : r.inProgressBy;
+    const name = String(rawName || '').trim();
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (!byName.has(key)) byName.set(key, { displayName: name, done: [], active: null });
+    const entry = byName.get(key);
+    if (r.status === 'done') entry.done.push(r);
+    else if (r.status === 'in_progress') {
+      if (!entry.active || (r.inProgressTs || 0) > (entry.active.inProgressTs || 0)) entry.active = r;
+    }
+  });
+  if (!byName.size) {
+    el.innerHTML = '<p class="text-gray-400 text-[10px] text-center py-3">Пока нет данных о работе колористов за эту смену — появятся, как только кто-то возьмёт в работу или закроет заявку «Нужна краска».</p>';
+    return;
+  }
+  const cards = Array.from(byName.values()).map(entry => {
+    const rows = entry.done.map(r => {
+      const startTs = (typeof r.inProgressTs === 'number') ? r.inProgressTs : r.ts;
+      const waitMs = startTs - r.ts;
+      const pourMs = (typeof r.doneTs === 'number') ? r.doneTs - startTs : null;
+      return { waitMs, pourMs };
+    });
+    const withWait = rows.filter(x => Number.isFinite(x.waitMs) && x.waitMs >= 0);
+    const withPour = rows.filter(x => Number.isFinite(x.pourMs) && x.pourMs >= 0);
+    const avgWait = withWait.length ? withWait.reduce((s, x) => s + x.waitMs, 0) / withWait.length : null;
+    const avgPour = withPour.length ? withPour.reduce((s, x) => s + x.pourMs, 0) / withPour.length : null;
+    let statusHtml;
+    let cardClass = 'border-gray-100 bg-gray-50';
+    if (entry.active) {
+      const startTs = (typeof entry.active.inProgressTs === 'number') ? entry.active.inProgressTs : entry.active.ts;
+      const elapsedMs = now - startTs;
+      const isOverdue = elapsedMs > PAINT_REQUEST_OVERDUE_MS;
+      cardClass = isOverdue ? 'border-red-200 bg-red-50' : 'border-blue-200 bg-blue-50';
+      statusHtml = `<div class="text-[10px] font-black ${isOverdue ? 'text-red-700' : 'text-blue-700'} truncate">🔵 наливает: ${escapeHtmlProd(entry.active.article || '')} <span class="font-bold text-gray-400">· линия ${escapeHtmlProd(String(entry.active.line || ''))}</span></div>
+        <div class="text-[9px] ${isOverdue ? 'text-red-500' : 'text-blue-500'} font-bold">${isOverdue ? '⏱ уже ' + formatDurationMs(elapsedMs) + ' — дольше обычного' : 'в работе ' + formatDurationMs(elapsedMs)}</div>`;
+    } else {
+      statusHtml = `<div class="text-[10px] font-bold text-gray-500">🟢 сейчас свободен</div>`;
+    }
+    return `<div class="border ${cardClass} rounded-xl p-3 space-y-1.5">
+      <div class="flex items-center justify-between">
+        <span class="text-[11px] font-black text-gray-800">${escapeHtmlProd(entry.displayName)}</span>
+        <span class="text-[9px] text-gray-400">закрыто за смену: ${entry.done.length}</span>
+      </div>
+      ${statusHtml}
+      <div class="text-[9px] text-gray-400">ср. ожидание ${avgWait !== null ? formatDurationMs(avgWait) : '—'} · ср. налив ${avgPour !== null ? formatDurationMs(avgPour) : '—'}</div>
+    </div>`;
+  });
+  // Тех, кто сейчас реально наливает, показываем сверху — так проще сразу
+  // увидеть, кто завис на заявке дольше обычного.
+  const activeFirst = Array.from(byName.values())
+    .map((entry, i) => ({ entry, html: cards[i] }))
+    .sort((a, b) => (b.entry.active ? 1 : 0) - (a.entry.active ? 1 : 0));
+  el.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 gap-2">${activeFirst.map(x => x.html).join('')}</div>`;
+}
+
+
 // общую очередь по всем линиям, отсортированную от самой старой заявки —
 // её и стоит брать первой.
 function renderPaintRequestsSection() {
@@ -4984,6 +5364,9 @@ function renderPaintRequestsSection() {
   if (!wrap) return;
   const role = currentUserProfile && currentUserProfile.role;
   if (!currentUserProfile) { wrap.classList.add('hidden'); updateColoristTabBadge(); return; }
+  // Держим обзор "успевают ли колористы" в панели начальника смены свежим
+  // при любом изменении заявок «Нужна краска», а не только по таймеру опроса.
+  if (role === 'shift_lead' && typeof renderLeadColoristStats === 'function') renderLeadColoristStats();
 
   if (role === 'senior_printer') {
     wrap.classList.remove('hidden');
@@ -6001,20 +6384,200 @@ function loadPrecedentCases() {
 // чтобы подсказки сразу считались в граммах, а не терялись из-за пустых полей.
 function autofillByArticle() {
   const article = document.getElementById('article').value.trim();
-  if (!article || !db) return;
+  const hintEl = document.getElementById('article-history-hint');
+  if (!article || !db) { if (hintEl) hintEl.classList.add('hidden'); return; }
   const tx = db.transaction(STORE_NAME, 'readonly');
   tx.objectStore(STORE_NAME).getAll().onsuccess = e => {
-    const matches = (e.target.result || [])
+    const all = e.target.result || [];
+    const matches = all
       .filter(r => (r.article || '').trim().toLowerCase() === article.toLowerCase())
       .sort((a, b) => b.id - a.id);
-    if (!matches.length) return;
+    articleHistoryCache = matches;
+    articleHintExactMatch = !!matches.length;
+    if (!matches.length) { renderArticleAiSuggestion(article, all); return; }
     const r = matches[0];
     ['cyan', 'magenta', 'yellow', 'red', 'black', 'pearl', 'orange', 'grandal'].forEach(k => {
       document.getElementById(k).value = r[k] ?? 0;
     });
     updateUI();
     addAIMessage(`✅ Подставлена дозировка по артикулу «${article}» из рецепта от ${r.date}`);
+    renderArticleHistoryHint(article, matches);
   };
+}
+// Полная «память» по артикулу — а не только тихая автоподстановка навесок
+// выше. Собирает ВСЕ прошлые сохранённые рецепты этого артикула (пигменты,
+// мастер, основа, лоты, комментарий — в т.ч. заметки начальника смены,
+// оставленные при сохранении) в одну наглядную карточку прямо под полем
+// «Артикул», плюс доступ к более старым замесам этого же артикула — чтобы
+// колорист видел полную логику подбора цвета, а не только последний факт.
+let articleHistoryCache = [];
+// true, пока карточка показывает точное совпадение по артикулу (см.
+// renderArticleHistoryHint) — тогда не нужно ещё и пересчитывать AI-подсказку
+// по цвету при каждой новой точке на Эталоне (см. refreshArticleAiSuggestionIfNeeded).
+let articleHintExactMatch = false;
+function renderArticleHistoryHint(article, matches) {
+  const el = document.getElementById('article-history-hint');
+  if (!el) return;
+  const last = matches[0];
+  const pigmentsSummary = Object.keys(PIGMENT_LABELS)
+    .filter(k => (last[k] || 0) > 0)
+    .map(k => `${PIGMENT_LABELS[k]} ${last[k]}г`)
+    .join(' · ') || '—';
+  const metaBits = [];
+  if (last.master) metaBits.push('👤 ' + escapeHtmlProd(last.master));
+  if (last.base) metaBits.push('🧪 ' + escapeHtmlProd(last.base));
+  if (last.weightKg) metaBits.push(last.weightKg + ' кг');
+  if (last.baseLot) metaBits.push('лот ' + escapeHtmlProd(last.baseLot));
+  if (last.pigmentLots) metaBits.push('пигм. ' + escapeHtmlProd(last.pigmentLots));
+  const olderList = matches.slice(1, 6);
+  el.innerHTML = `
+    <div class="bg-amber-50 border-2 border-amber-100 rounded-2xl p-3 space-y-1.5">
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-[10px] font-black uppercase text-amber-800">💡 Уже красили этот артикул — вот как</span>
+        <span class="text-[9px] font-black text-amber-600 shrink-0">${matches.length}×</span>
+      </div>
+      <div class="text-[9px] text-amber-700">Последний раз ${escapeHtmlProd(last.date)}${metaBits.length ? ' · ' + metaBits.join(' · ') : ''}</div>
+      <div class="text-[11px] font-bold text-amber-900">${pigmentsSummary}</div>
+      ${last.comment ? `<div class="text-[10px] text-amber-800 bg-white/70 rounded-xl px-2 py-1.5 italic">📝 ${escapeHtmlProd(last.comment)}</div>` : ''}
+      <p class="text-[8px] text-amber-600 leading-relaxed">Навески уже подставлены в форму выше — проверьте перед замесом. Комментарий может быть от начальника смены или другого мастера, который колеровал это раньше.</p>
+      <div class="flex gap-1.5 flex-wrap pt-1">
+        <button onclick="showArticleTrend('${article.replace(/'/g, "\\'")}')" class="text-[9px] bg-white text-amber-700 border border-amber-200 px-2.5 py-1.5 rounded-xl font-black uppercase">📈 Тренд ΔE</button>
+        ${olderList.length ? `<button onclick="toggleArticleHistoryOlder()" class="text-[9px] bg-white text-amber-700 border border-amber-200 px-2.5 py-1.5 rounded-xl font-black uppercase">🕒 Ещё ${olderList.length} прошлых замеса</button>` : ''}
+      </div>
+      <div id="article-history-older" class="hidden space-y-1.5 pt-1">
+        ${olderList.map(r => `
+          <div class="flex items-center justify-between gap-2 bg-white/70 rounded-xl px-2.5 py-1.5">
+            <div class="min-w-0">
+              <div class="text-[9px] font-bold text-amber-900">${escapeHtmlProd(r.date)}${r.master ? ' · 👤 ' + escapeHtmlProd(r.master) : ''}</div>
+              ${r.comment ? `<div class="text-[8px] text-amber-700 italic truncate">📝 ${escapeHtmlProd(r.comment)}</div>` : ''}
+            </div>
+            <button onclick="loadArticleHistoryRecipe(${r.id})" class="shrink-0 text-[8px] bg-amber-600 text-white px-2 py-1.5 rounded-lg font-black uppercase">Взять этот</button>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  el.classList.remove('hidden');
+}
+function toggleArticleHistoryOlder() {
+  const el = document.getElementById('article-history-older');
+  if (el) el.classList.toggle('hidden');
+}
+// «Взять этот» у более старого замеса того же артикула — переиспользуем уже
+// существующий loadRecipeIntoForm (тот же, что и в Библиотеке), подставив
+// в lastLoadedRecipes наш кэш истории по артикулу.
+function loadArticleHistoryRecipe(id) {
+  lastLoadedRecipes = articleHistoryCache;
+  loadRecipeIntoForm(id);
+  toast('Рецепт подставлен в форму');
+}
+
+// ===== AI-подсказка для НОВОГО артикула (которого ещё нет в архиве) =====
+// Логика: раз точного совпадения по названию нет, не оставляем колориста
+// с пустой формой, а собираем лучшее, что можно вывести из ВСЕГО архива
+// сразу — без привязки к конкретному названию артикула:
+//   1) если на фото Эталона уже стоит хотя бы одна точка — ищем ближайшие
+//      по ΔE2000 сохранённые рецепты (та же научная база, что и в «Поиск
+//      рецепта по цвету» в Библиотеке) — это самый точный ориентир, он в
+//      принципе не зависит от того, встречался ли раньше именно такой номер
+//      артикула;
+//   2) параллельно ищем артикулы той же "серии" (совпадает часть номера до
+//      последнего дефиса) — коллекции обоев почти всегда красят похожими
+//      рецептами, поэтому это тоже неплохой ориентир, даже без фото;
+// Оба источника считаются по ВСЕМ рецептам, что накоплены на устройстве —
+// чем больше библиотека, тем точнее подсказка, без единой правки кода.
+function articleFamilyKey(a) {
+  const s = (a || '').trim();
+  if (!s) return '';
+  const dashIdx = s.lastIndexOf('-');
+  if (dashIdx > 0) return s.slice(0, dashIdx).toLowerCase();
+  return s.slice(0, Math.max(3, Math.ceil(s.length * 0.6))).toLowerCase();
+}
+function renderArticleAiSuggestion(article, allRecipes) {
+  const el = document.getElementById('article-history-hint');
+  if (!el) return;
+  const all = allRecipes || [];
+  if (!all.length) {
+    el.innerHTML = `<div class="bg-blue-50 border-2 border-blue-100 rounded-2xl p-3 text-[9px] text-blue-700 leading-relaxed">🤖 Архив рецептов пока пуст — как только появится первый сохранённый рецепт, для новых артикулов начнут появляться подсказки по цвету и по похожим сериям.</div>`;
+    el.classList.remove('hidden');
+    return;
+  }
+  let colorMatches = [];
+  const avgTheo = (typeof theoPoints !== 'undefined') ? getAverageColor(theoPoints) : null;
+  if (avgTheo) {
+    const targetLab = ColorEngine.rgbToLab(avgTheo.r, avgTheo.g, avgTheo.b);
+    colorMatches = all.filter(r => r.lab)
+      .map(r => ({ r, dE: ColorEngine.deltaE2000(targetLab, r.lab) }))
+      .sort((a, b) => a.dE - b.dE)
+      .slice(0, 3);
+  }
+  const famKey = articleFamilyKey(article);
+  const usedIds = new Set(colorMatches.map(x => x.r.id));
+  const familyMatches = famKey ? all
+    .filter(r => r.article && r.article.trim().toLowerCase() !== article.toLowerCase() && articleFamilyKey(r.article) === famKey && !usedIds.has(r.id))
+    .sort((a, b) => (b.id || 0) - (a.id || 0))
+    .slice(0, 3) : [];
+
+  if (!colorMatches.length && !familyMatches.length) {
+    el.innerHTML = `<div class="bg-blue-50 border-2 border-blue-100 rounded-2xl p-3 text-[9px] text-blue-700 leading-relaxed">🤖 Артикул новый, готовой подсказки под него пока нет (ни по цвету, ни по похожей серии). Отметьте хотя бы одну точку на фото Эталона — приложение сразу подберёт похожие рецепты по цвету из всего архива, даже если такого артикула раньше не было.</div>`;
+    el.classList.remove('hidden');
+    articleHistoryCache = [];
+    return;
+  }
+  articleHistoryCache = [...colorMatches.map(x => x.r), ...familyMatches];
+
+  const renderItem = (r, badge) => {
+    const pigmentsSummary = Object.keys(PIGMENT_LABELS)
+      .filter(k => (r[k] || 0) > 0)
+      .map(k => `${PIGMENT_LABELS[k]} ${r[k]}г`)
+      .join(' · ') || '—';
+    return `<div class="flex items-start justify-between gap-2 bg-white/80 rounded-xl px-2.5 py-2">
+      <div class="min-w-0 flex-1">
+        <div class="text-[9px] font-black text-blue-900 flex items-center gap-1.5 flex-wrap">${badge}${r.article ? 'Арт. ' + escapeHtmlProd(r.article) : escapeHtmlProd(r.name || '')}${r.master ? ' · 👤 ' + escapeHtmlProd(r.master) : ''}</div>
+        <div class="text-[9px] text-blue-800 mt-0.5">${pigmentsSummary}</div>
+        ${r.comment ? `<div class="text-[8px] text-blue-700 italic mt-0.5 truncate">📝 ${escapeHtmlProd(r.comment)}</div>` : ''}
+      </div>
+      <button onclick="loadSuggestedRecipeKeepArticle(${r.id})" class="shrink-0 text-[8px] bg-blue-600 text-white px-2 py-1.5 rounded-lg font-black uppercase">Взять этот</button>
+    </div>`;
+  };
+
+  el.innerHTML = `
+    <div class="bg-blue-50 border-2 border-blue-100 rounded-2xl p-3 space-y-2">
+      <div class="text-[10px] font-black uppercase text-blue-800">🤖 Артикул новый — вот как посоветовал бы начальник смены</div>
+      <p class="text-[8px] text-blue-600 leading-relaxed -mt-1">Считается по всем сохранённым рецептам сразу, а не только по названию артикула — чем больше рецептов в архиве, тем точнее подсказка.</p>
+      ${colorMatches.length ? `
+        <div class="text-[9px] font-black uppercase text-blue-700">🎯 По цвету эталона ближе всего</div>
+        <div class="space-y-1.5">${colorMatches.map(x => renderItem(x.r, `<span class="bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5">ΔE ${x.dE.toFixed(1)}</span> `)).join('')}</div>
+      ` : `<div class="text-[8px] text-blue-500">Отметьте точку на фото Эталона — появится и подбор по цвету, он точнее подбора по серии.</div>`}
+      ${familyMatches.length ? `
+        <div class="text-[9px] font-black uppercase text-blue-700 pt-1">🧬 Похожие артикулы этой же серии</div>
+        <div class="space-y-1.5">${familyMatches.map(r => renderItem(r, '')).join('')}</div>
+      ` : ''}
+    </div>`;
+  el.classList.remove('hidden');
+}
+// «Взять этот» у AI-подсказки: рецепт-донор может принадлежать СОВСЕМ
+// другому артикулу — в отличие от loadArticleHistoryRecipe (тот же артикул),
+// здесь нельзя дать loadRecipeIntoForm затереть уже введённый номер нового
+// артикула чужим номером, поэтому запоминаем и сразу восстанавливаем его.
+function loadSuggestedRecipeKeepArticle(id) {
+  const articleEl = document.getElementById('article');
+  const keepArticle = articleEl ? articleEl.value : '';
+  lastLoadedRecipes = articleHistoryCache;
+  loadRecipeIntoForm(id);
+  if (articleEl) articleEl.value = keepArticle;
+  toast('Рецепт-подсказка подставлен в форму (номер артикула сохранён)');
+}
+// Пока фото Эталона ещё не размечено точками, AI-подсказка для нового
+// артикула основана только на "серии" (или вообще пуста) — как только
+// добавляется точка на Эталон (см. addPoint), пробуем пересчитать её заново
+// с учётом появившегося цвета. Если сейчас показано ТОЧНОЕ совпадение по
+// артикулу — не трогаем, там и так лучший источник (see articleHintExactMatch).
+function refreshArticleAiSuggestionIfNeeded() {
+  if (articleHintExactMatch) return;
+  const articleEl = document.getElementById('article');
+  const article = articleEl ? articleEl.value.trim() : '';
+  if (!article || !db) return;
+  const tx = db.transaction(STORE_NAME, 'readonly');
+  tx.objectStore(STORE_NAME).getAll().onsuccess = e => renderArticleAiSuggestion(article, e.target.result || []);
 }
 
 // Кружок-образец у каждого поля пигмента хранит РЕАЛЬНЫЙ цвет краски с завода
@@ -8076,6 +8639,7 @@ function addPoint(event, type) {
   points.push({ x, y, region: pointRegion, color: { r: Math.round(avgR * wb.r), g: Math.round(avgG * wb.g), b: Math.round(avgB * wb.b) } });
   renderPoints(type);
   runAnalysis();
+  if (type === 'theo' && typeof refreshArticleAiSuggestionIfNeeded === 'function') refreshArticleAiSuggestionIfNeeded();
 }
 
 function renderPoints(type) {
@@ -9721,6 +10285,7 @@ function switchView(view) {
     btnStats.classList.remove(...inactiveClasses); btnStats.classList.add(...activeClasses);
     renderStatsView();
     renderPaintRequestStats();
+    renderLeadStatsSection();
   } else if (view === 'preview') {
     preview.classList.remove('hidden');
     btnPreview.classList.remove(...inactiveClasses); btnPreview.classList.add(...activeClasses);
@@ -11881,6 +12446,12 @@ function loadPrelaunchLog() {
 function savePrelaunchLog(list) {
   try { localStorage.setItem(PRELAUNCH_LOG_KEY, JSON.stringify(list)); } catch (e) {}
 }
+// Раньше сдачи чек-листа приладки жили только в localStorage того
+// устройства, с которого печатник сдавал чек-лист, — начальник смены со
+// своего телефона их не видел вообще. Теперь держим общий массив в памяти
+// (как shiftReports/lineRuns) и синхронизируем через ту же общую базу —
+// см. submitPrelaunchChecklist() и опрос checkPaintAlertOnce().
+let prelaunchLog = loadPrelaunchLog();
 function loadProductionOrders() {
   try { return JSON.parse(localStorage.getItem(PRODUCTION_ORDERS_KEY) || '[]'); } catch (e) { return []; }
 }
@@ -11921,6 +12492,23 @@ function loadMaterialLedger() {
 function saveMaterialLedger(list) {
   try { localStorage.setItem(MATERIAL_LEDGER_KEY, JSON.stringify(list)); } catch (e) {}
 }
+// "Ожидающие подтверждения облаком" ID (lineRuns/productionOrders) раньше
+// хранились только в памяти (обычный Set) — при закрытии и повторном
+// открытии приложения этот список обнулялся, хотя реальное подтверждение
+// от облака ещё могло не прийти (у Google Таблиц через Apps Script чтение
+// иногда отстаёт от записи на десятки секунд). Из-за этого первый же опрос
+// после перезапуска приложения видел "пустой список ожидания" и слепо
+// принимал устаревший снимок из облака — и только что нажатое «Линия
+// поехала»/новая скорость пропадали, как будто их и не было. Теперь список
+// ожидания сохраняется в localStorage и переживает перезапуск.
+function savePendingIdSet(key, set) {
+  try { localStorage.setItem(key, JSON.stringify(Array.from(set || []))); } catch (e) {}
+}
+function loadPendingIdSet(key) {
+  try { return new Set(JSON.parse(localStorage.getItem(key) || '[]')); } catch (e) { return new Set(); }
+}
+const LINE_RUNS_PENDING_KEY = 'colorist_line_runs_pending';
+const PRODUCTION_ORDERS_PENDING_KEY = 'colorist_prod_orders_pending';
 let productionOrders = loadProductionOrders();
 // Версия локального плана нужна, чтобы ответ облачного опроса, начавшегося
 // до импорта, не смог затереть только что загруженные заказы.
@@ -11931,7 +12519,7 @@ let productionOrdersCloudSyncing = false;
 let productionOrdersIgnoreRemoteUntil = 0;
 // ID заказов, которые должны появиться в облачном снимке после импорта.
 // Защита снимается только после подтверждения, а не по таймеру.
-let productionOrdersPendingCloudIds = new Set();
+let productionOrdersPendingCloudIds = loadPendingIdSet(PRODUCTION_ORDERS_PENDING_KEY);
 let rawMaterials = loadRawMaterials();
 let plannedMaintenance = loadPlannedMaintenance();
 let materialLedger = loadMaterialLedger();
@@ -11976,10 +12564,11 @@ let lineRunsCloudSyncing = false;
 // id из "ожидающих" (а не просто наличие id — id мог быть в базе и ДО
 // изменения, например до нажатия «Артикул закончен»).
 let lineRunsRevision = 0;
-let lineRunsPendingCloudIds = new Set();
+let lineRunsPendingCloudIds = loadPendingIdSet(LINE_RUNS_PENDING_KEY);
 function markLineRunPending(id) {
   lineRunsRevision++;
   lineRunsPendingCloudIds.add(id);
+  savePendingIdSet(LINE_RUNS_PENDING_KEY, lineRunsPendingCloudIds);
 }
 function isLineRunConfirmedByRemote(localRun, remoteRuns) {
   const remoteRun = (remoteRuns || []).find(r => r.id === localRun.id);
@@ -12025,7 +12614,11 @@ function renderDashboardView() {
     renderLinesOverview();
     renderLeadFourLines();
     renderColoristFourLines('dash-lead-colorist-four-lines');
+    renderLeadColoristStats();
     renderLineRunCard('lead', true);
+    renderShiftSpeedPlan();
+    renderShiftDefectLive();
+    startShiftPlanTick();
   } else if (role === 'production_director' || role === 'shop_chief' || role === 'general_director') {
     sections.kpi.classList.remove('hidden');
     renderDirectorDashboard();
@@ -12052,7 +12645,7 @@ function renderPrelaunchChecklist() {
         <span>${item}</span>
       </label>`).join('');
   }
-  const log = loadPrelaunchLog().filter(l => l.name === (currentUserProfile && currentUserProfile.name)).sort((a, b) => b.ts - a.ts).slice(0, 3);
+  const log = prelaunchLog.filter(l => l.name === (currentUserProfile && currentUserProfile.name)).sort((a, b) => b.ts - a.ts).slice(0, 3);
   const logEl = document.getElementById('dash-checklist-log');
   if (logEl) {
     logEl.innerHTML = log.length ? '<div class="text-[9px] font-black uppercase text-gray-400">Последние сдачи</div>' + log.map(l => `<div class="text-[9px] text-gray-500">${new Date(l.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} — ${l.checkedCount}/${PRELAUNCH_ITEMS.length} пунктов${l.line ? ', линия ' + l.line : ''}</div>`).join('') : '';
@@ -12060,13 +12653,17 @@ function renderPrelaunchChecklist() {
 }
 function submitPrelaunchChecklist() {
   if (!currentUserProfile) { toast('Сначала войдите в личный кабинет.'); return; }
-  const checkedCount = PRELAUNCH_ITEMS.reduce((n, _, i) => n + ((document.getElementById('dash-check-' + i) || {}).checked ? 1 : 0), 0);
-  const log = loadPrelaunchLog();
-  log.push({ id: 'pl' + Date.now(), ts: Date.now(), name: currentUserProfile.name, line: currentUserProfile.line || null, checkedCount, total: PRELAUNCH_ITEMS.length });
-  savePrelaunchLog(log);
+  const items = PRELAUNCH_ITEMS.map((_, i) => !!((document.getElementById('dash-check-' + i) || {}).checked));
+  const checkedCount = items.reduce((n, v) => n + (v ? 1 : 0), 0);
+  const entry = { id: 'pl' + Date.now(), ts: Date.now(), name: currentUserProfile.name, role: currentUserProfile.role, line: currentUserProfile.line || null, checkedCount, total: PRELAUNCH_ITEMS.length, items };
+  prelaunchLog = [...prelaunchLog, entry];
+  savePrelaunchLog(prelaunchLog);
   logCorrection(`Сдал чек-лист приладки (${checkedCount}/${PRELAUNCH_ITEMS.length})${currentUserProfile.line ? ', линия ' + currentUserProfile.line : ''}`, 'shift');
   toast(checkedCount === PRELAUNCH_ITEMS.length ? 'Чек-лист сдан полностью ✅' : `Чек-лист сдан (${checkedCount}/${PRELAUNCH_ITEMS.length}) — начальник смены увидит незакрытые пункты`);
   renderPrelaunchChecklist();
+  // Отправляем в общую базу, чтобы начальник смены видел сдачи со ВСЕХ
+  // устройств, а не только со своего (см. пояснение у объявления prelaunchLog).
+  syncArrayToCloud('prelaunchLog', prelaunchLog);
 }
 
 // ---------- «Требуется ремонт»: колорист / ст.печатник / начальник смены /
@@ -12934,6 +13531,7 @@ function stopLineRun(prefix, id) {
     // не стёр только что засчитанный метраж, пока облако его не подтвердит.
     productionOrdersRevision++;
     productionOrdersPendingCloudIds.add(order.id);
+    savePendingIdSet(PRODUCTION_ORDERS_PENDING_KEY, productionOrdersPendingCloudIds);
     syncArrayToCloud('productionOrders', productionOrders);
     orderNote = ' — засчитано в заказ «' + order.article + '»';
     if (typeof renderOrdersList === 'function') renderOrdersList();
@@ -13066,6 +13664,139 @@ function renderLineRunCard(prefix, passive) {
         <button onclick="stopLineRun('${prefix}','${active.id}')" class="flex-1 bg-emerald-600 text-white py-2 rounded-xl font-black text-[9px] uppercase">✅ Артикул закончен</button>
       </div>
     </div>`;
+}
+
+// ===== Начальник смены: скорость под план смены + брак за смену =====
+// Смена — 12 часов, дневная 08:00–20:00 и ночная 20:00–08:00 (по будильнику
+// устройства). Оба блока (скорость и брак) считаются от ОДНОГО и того же
+// «уже сделано с начала текущей смены» — суммы по всем 4 линиям сразу из
+// lineRuns (тот же массив, что и «🚦 Статус линий сейчас»), чтобы не вводить
+// это число ещё раз руками. Понятие тут — календарная смена по часам, а не
+// запись в «Журнале смены» (кнопка «▶️ Начать смену» может быть нажата позже
+// или не нажата вовсе) — так расчёт работает всегда, даже если про журнал
+// смены забыли.
+function getCurrentShiftWindow(now) {
+  now = now || new Date();
+  const h = now.getHours();
+  let start, end, isDay;
+  if (h >= 8 && h < 20) {
+    start = new Date(now); start.setHours(8, 0, 0, 0);
+    end = new Date(now); end.setHours(20, 0, 0, 0);
+    isDay = true;
+  } else if (h >= 20) {
+    start = new Date(now); start.setHours(20, 0, 0, 0);
+    end = new Date(now); end.setDate(end.getDate() + 1); end.setHours(8, 0, 0, 0);
+    isDay = false;
+  } else {
+    start = new Date(now); start.setDate(start.getDate() - 1); start.setHours(20, 0, 0, 0);
+    end = new Date(now); end.setHours(8, 0, 0, 0);
+    isDay = false;
+  }
+  return { start, end, isDay };
+}
+// Метраж конкретного забега линии, попавший в окно [winStartMs; winEndMs]:
+// активный забег считается по факту скорости до текущего момента, «уже
+// сделано на начало смены» (offsetMeters) засчитывается только если сам
+// забег начался внутри этого окна (иначе задвоим с предыдущей сменой).
+function estimateRunMetersInWindow(r, winStartMs, winEndMs) {
+  const runEnd = r.endTs || Date.now();
+  const overlapStart = Math.max(r.startTs, winStartMs);
+  const overlapEnd = Math.min(runEnd, winEndMs);
+  if (overlapEnd <= overlapStart) return 0;
+  const speed = r.speedMPerMin || 0;
+  let meters = speed * ((overlapEnd - overlapStart) / 60000);
+  if (r.startTs >= winStartMs && r.startTs < winEndMs) meters += (r.offsetMeters || 0);
+  return meters;
+}
+function getShiftProducedMeters(winStartMs) {
+  const nowMs = Date.now();
+  return (lineRuns || []).reduce((sum, r) => sum + estimateRunMetersInWindow(r, winStartMs, nowMs), 0);
+}
+const SHIFTSPEED_TARGET_KEY = 'dash_shiftspeed_target_rolls';
+const SHIFTSPEED_LINES_KEY = 'dash_shiftspeed_lines_count';
+function onShiftSpeedInputChange() {
+  const t = document.getElementById('dash-shiftspeed-target');
+  const l = document.getElementById('dash-shiftspeed-lines');
+  if (t) localStorage.setItem(SHIFTSPEED_TARGET_KEY, t.value || '');
+  if (l) localStorage.setItem(SHIFTSPEED_LINES_KEY, l.value || '');
+  renderShiftSpeedPlan();
+}
+function renderShiftSpeedPlan() {
+  const wrap = document.getElementById('dash-shiftspeed-result');
+  if (!wrap) return;
+  const targetInput = document.getElementById('dash-shiftspeed-target');
+  const linesInput = document.getElementById('dash-shiftspeed-lines');
+  if (targetInput && document.activeElement !== targetInput && !targetInput.value) targetInput.value = localStorage.getItem(SHIFTSPEED_TARGET_KEY) || '3000';
+  if (linesInput && document.activeElement !== linesInput && !linesInput.value) linesInput.value = localStorage.getItem(SHIFTSPEED_LINES_KEY) || '1';
+  const target = parseFloat(targetInput ? targetInput.value : '') || 3000;
+  const linesCount = Math.max(1, Math.min(4, parseInt(linesInput ? linesInput.value : '', 10) || 1));
+  const { start, end, isDay } = getCurrentShiftWindow();
+  const nowMs = Date.now();
+  const remainingMin = Math.max(1, Math.round((end.getTime() - nowMs) / 60000));
+  const producedMeters = getShiftProducedMeters(start.getTime());
+  const producedRolls = producedMeters / METERS_PER_ROLL;
+  const remainingRolls = Math.max(0, target - producedRolls);
+  const remainingMeters = remainingRolls * METERS_PER_ROLL;
+  const reqTotal = remainingMeters / remainingMin;
+  const reqPerLine = reqTotal / linesCount;
+  const rH = Math.floor(remainingMin / 60), rM = remainingMin % 60;
+  const doneLabel = `${Math.round(producedRolls)} рул. (${Math.round(producedMeters)} м)`;
+  if (remainingRolls <= 0) {
+    wrap.innerHTML = `<div class="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-[11px] font-black text-emerald-700 text-center">🎉 План уже выполнен: ${doneLabel} из ${Math.round(target)} рул.</div>`;
+    return;
+  }
+  const warn = reqPerLine > 120 ? `<div class="text-[9px] text-red-600 font-bold mt-1">⚠️ Это выше типичной скорости линии — за оставшееся время план вряд ли реален, стоит скорректировать ожидания.</div>` : '';
+  wrap.innerHTML = `<div class="bg-blue-50 border border-blue-100 rounded-xl p-3 space-y-1">
+    <div class="text-[9px] text-blue-700">${isDay ? '☀️ Дневная смена (08:00–20:00)' : '🌙 Ночная смена (20:00–08:00)'} · до конца ${rH} ч ${rM} мин</div>
+    <div class="text-[10px] text-blue-800">Сделано с начала смены: <b>${doneLabel}</b> из ${Math.round(target)} рул.</div>
+    <div class="text-[10px] text-blue-800">Осталось: <b>${Math.round(remainingRolls)} рул. (${Math.round(remainingMeters)} м)</b></div>
+    <div class="text-[13px] font-black text-blue-900 pt-1">🚀 Нужная скорость: ${reqTotal.toFixed(1)} м/мин${linesCount > 1 ? ` суммарно (по ${reqPerLine.toFixed(1)} м/мин на линию × ${linesCount})` : ' на линию'}</div>
+    ${warn}
+  </div>`;
+}
+// Брак за текущую (календарную) смену — привязан к её началу (start.getTime()),
+// поэтому с наступлением новой смены поле само «обнуляется» (это уже другой
+// ключ localStorage), а не накапливается вечно.
+function getShiftDefectStorageKey(startMs) { return 'dash_shiftdefect_rolls_' + startMs; }
+function onShiftDefectInput() {
+  const { start } = getCurrentShiftWindow();
+  const input = document.getElementById('dash-shiftdefect-rolls');
+  if (input) localStorage.setItem(getShiftDefectStorageKey(start.getTime()), input.value || '');
+  renderShiftDefectLive();
+}
+function renderShiftDefectLive() {
+  const wrap = document.getElementById('dash-shiftdefect-result');
+  if (!wrap) return;
+  const { start } = getCurrentShiftWindow();
+  const input = document.getElementById('dash-shiftdefect-rolls');
+  const metersEl = document.getElementById('dash-shiftdefect-meters');
+  if (input && document.activeElement !== input && !input.value) {
+    const saved = localStorage.getItem(getShiftDefectStorageKey(start.getTime()));
+    if (saved) input.value = saved;
+  }
+  const defectRolls = parseFloat(input ? input.value : '') || 0;
+  const defectMeters = Math.round(defectRolls * METERS_PER_ROLL * 10) / 10;
+  if (metersEl) metersEl.textContent = defectMeters;
+  const producedMeters = getShiftProducedMeters(start.getTime());
+  const producedRolls = producedMeters / METERS_PER_ROLL;
+  if (!producedRolls) {
+    wrap.innerHTML = `<div class="text-[9px] text-gray-400">Пока не сделано ни одного рулона за эту смену — % посчитается, как только пойдёт выкатка.</div>`;
+    return;
+  }
+  const pct = Math.round((defectMeters / producedMeters) * 1000) / 10;
+  const pctColor = pct >= 5 ? 'text-red-600' : (pct >= 2 ? 'text-amber-600' : 'text-emerald-600');
+  wrap.innerHTML = `<div class="bg-gray-50 rounded-xl p-3 space-y-1">
+    <div class="text-[10px] text-gray-500">Сделано за смену: ${Math.round(producedRolls)} рул.</div>
+    <div class="text-[13px] font-black ${pctColor}">🚨 Брак: ${Math.round(defectRolls)} рул. (${defectMeters} м) · ${pct}%</div>
+  </div>`;
+}
+// Тикаем оба блока раз в 20с, пока открыта панель начальника смены —
+// независимо от того, идёт ли сейчас активный забег линии (в отличие от
+// _lineRunTimers, который тикает только при активном забеге выбранной линии).
+let _shiftPlanTimer = null;
+function startShiftPlanTick() {
+  if (_shiftPlanTimer) clearInterval(_shiftPlanTimer);
+  _shiftPlanTimer = setInterval(() => { renderShiftSpeedPlan(); renderShiftDefectLive(); }, 20000);
 }
 
 // ---------- Интеграция с Bitrix24: сделки CRM -> план заказов (одностороннее) ----------
@@ -13378,6 +14109,7 @@ async function handleOrdersExcelImport(evt, statusElId) {
     productionOrdersPendingCloudIds = new Set(productionOrders
       .filter(o => !orderIdsBeforeImport.has(o.id))
       .map(o => o.id));
+    savePendingIdSet(PRODUCTION_ORDERS_PENDING_KEY, productionOrdersPendingCloudIds);
     saveProductionOrders(productionOrders);
     renderOrdersList();
     // Меняем ревизию до первого await: уже выполняющийся старый облачный
@@ -13567,8 +14299,29 @@ async function renderShiftPanel() {
       <textarea id="shift-close-note" rows="2" placeholder="Что передать следующей смене (обязательно к прочтению)" class="w-full p-2.5 bg-amber-50 rounded-xl outline-none text-[10px] font-bold border border-amber-100 resize-none"></textarea>
       <button onclick="endShiftConfirm()" class="w-full bg-red-600 text-white py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">⏹ Подтвердить закрытие смены</button>
     </div>
-    <button onclick="document.getElementById('shift-close-form').classList.toggle('hidden')" class="w-full bg-amber-100 text-amber-800 py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">⏹ Закрыть смену и передать</button>
+    <button onclick="toggleShiftCloseForm()" class="w-full bg-amber-100 text-amber-800 py-2.5 rounded-xl font-black uppercase text-[10px] btn-active">⏹ Закрыть смену и передать</button>
   `;
+}
+// Открытие формы закрытия смены заодно подставляет то, что уже посчитано
+// в блоках «🚀 Скорость под план смены» и «🚨 Брак за смену» (если поля
+// закрытия ещё пустые) — чтобы не вводить рулоны и брак дважды.
+function toggleShiftCloseForm() {
+  const form = document.getElementById('shift-close-form');
+  if (!form) return;
+  const wasHidden = form.classList.contains('hidden');
+  form.classList.toggle('hidden');
+  if (wasHidden) prefillShiftCloseFromLive();
+}
+function prefillShiftCloseFromLive() {
+  const rollsInput = document.getElementById('shift-close-rolls');
+  const defectInput = document.getElementById('shift-close-defect-m');
+  if (!rollsInput && !defectInput) return;
+  const { start } = getCurrentShiftWindow();
+  const producedRolls = Math.round(getShiftProducedMeters(start.getTime()) / METERS_PER_ROLL);
+  const defectRollsInput = document.getElementById('dash-shiftdefect-rolls');
+  const defectRolls = parseFloat(defectRollsInput ? defectRollsInput.value : '') || 0;
+  if (rollsInput && !rollsInput.value && producedRolls) rollsInput.value = producedRolls;
+  if (defectInput && !defectInput.value && defectRolls) defectInput.value = Math.round(defectRolls * METERS_PER_ROLL * 10) / 10;
 }
 async function startShift() {
   const shift = { id: Date.now(), startTs: Date.now(), endTs: null, notes: [], closeNote: '' };
@@ -14427,6 +15180,329 @@ function renderArticleDEHistoryChart(article) {
     <div class="flex justify-between text-[8px] text-gray-400 px-1"><span>${rows[0].date}</span><span>${rows[rows.length - 1].date}</span></div>
     <div class="text-[9px] text-gray-500 text-center mt-1">${rows.length} замесов · последний ΔE ${rows[rows.length - 1].dE.toFixed(1)} · средний ${avg.toFixed(1)} · ${trend}</div>
   `;
+}
+
+// ===================================================================
+// СТАТИСТИКА СМЕНЫ (для роли «начальник смены»)
+// В отличие от блока выше (рецепты колориста), здесь считаем по данным
+// самого производства — простои (maintRequests), брак (shiftReports),
+// выработка/скорость (lineRuns) и чек-листы приладки (prelaunchLog).
+// Все четыре массива уже синхронизируются через общую базу (см. опрос
+// checkPaintAlertOnce), поэтому статистика одинакова с любого устройства,
+// а не только с того, где вносились данные. Плюс — офлайн-«спросить»:
+// разбор простого текста по ключевым словам, без интернета и без ИИ,
+// который сразу считает нужный блок и прокручивает к нему.
+// ===================================================================
+function leadStatsSince(days) { return Date.now() - days * 86400000; }
+
+// Компактный SVG-график тренда — тот же визуальный стиль, что и у
+// renderArticleDEHistoryChart выше, но обобщённый под любые точки {label,value}.
+function renderMiniTrendSvg(points, opts) {
+  opts = opts || {};
+  if (!points || points.length < 2) return '<p class="text-gray-400 text-[10px] text-center py-3">Недостаточно точек для графика за этот период</p>';
+  const w = 300, h = 80, pad = 10;
+  const maxV = Math.max(0.001, ...points.map(p => p.value));
+  const stepX = (w - pad * 2) / (points.length - 1);
+  const pts = points.map((p, i) => [pad + i * stepX, h - pad - (p.value / maxV) * (h - pad * 2)]);
+  const path = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+  const color = opts.color || '#2563eb';
+  const dots = pts.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.3" fill="${color}"></circle>`).join('');
+  return `
+    <svg viewBox="0 0 ${w} ${h}" class="w-full h-20">
+      <line x1="${pad}" y1="${h - pad}" x2="${w - pad}" y2="${h - pad}" stroke="#e5e7eb" stroke-width="1"/>
+      <path d="${path}" fill="none" stroke="${color}" stroke-width="2"/>
+      ${dots}
+    </svg>
+    <div class="flex justify-between text-[8px] text-gray-400 px-1"><span>${escapeHtmlProd(points[0].label)}</span><span>${escapeHtmlProd(points[points.length - 1].label)}</span></div>
+  `;
+}
+
+// ---------- 1. Простои и поломки (maintRequests) ----------
+function computeLeadDowntimeStats(days) {
+  const since = leadStatsSince(days);
+  const list = (maintRequests || []).filter(r => r.ts >= since);
+  const byCategory = {}, byLine = {};
+  let mttrSum = 0, mttrCount = 0, openCount = 0;
+  list.forEach(r => {
+    const cat = r.category || 'other';
+    if (!byCategory[cat]) byCategory[cat] = { count: 0, downtimeMs: 0 };
+    byCategory[cat].count++;
+    if (r.status === 'open') openCount++;
+    if (r.resolvedTs && r.ts) {
+      const dt = Math.max(0, r.resolvedTs - r.ts);
+      byCategory[cat].downtimeMs += dt;
+      mttrSum += dt; mttrCount++;
+    }
+    if (r.line) {
+      const lk = String(r.line);
+      if (!byLine[lk]) byLine[lk] = { count: 0, downtimeMs: 0 };
+      byLine[lk].count++;
+      if (r.resolvedTs && r.ts) byLine[lk].downtimeMs += Math.max(0, r.resolvedTs - r.ts);
+    }
+  });
+  return {
+    total: list.length,
+    openCount,
+    mttrMs: mttrCount ? mttrSum / mttrCount : null,
+    byCategory: Object.entries(byCategory).sort((a, b) => b[1].count - a[1].count),
+    byLine: Object.entries(byLine).sort((a, b) => b[1].downtimeMs - a[1].downtimeMs)
+  };
+}
+function renderLeadDowntimeStats(days) {
+  const el = document.getElementById('lead-stats-downtime');
+  if (!el) return;
+  const s = computeLeadDowntimeStats(days);
+  el.innerHTML = `
+    <div class="text-[11px] font-black uppercase text-gray-700">⏸ Простои и поломки · ${days} дн.</div>
+    <div class="grid grid-cols-3 gap-2">
+      <div class="bg-gray-100 rounded-2xl p-3 text-center"><div class="text-xl font-black text-gray-700">${s.total}</div><div class="text-[8px] font-black uppercase text-gray-400">заявок</div></div>
+      <div class="bg-red-50 rounded-2xl p-3 text-center"><div class="text-xl font-black text-red-600">${s.openCount}</div><div class="text-[8px] font-black uppercase text-red-400">сейчас открыто</div></div>
+      <div class="bg-amber-50 rounded-2xl p-3 text-center"><div class="text-sm font-black text-amber-700 leading-tight">${s.mttrMs != null ? formatDurationMs(s.mttrMs) : '—'}</div><div class="text-[8px] font-black uppercase text-amber-500">ср. устранение</div></div>
+    </div>
+    <div class="text-[9px] font-black uppercase tracking-wide text-gray-400 mt-2 mb-1">По причинам</div>
+    ${s.byCategory.length ? s.byCategory.map(([cat, v]) => `<div class="flex justify-between text-xs py-1 border-b border-gray-50 last:border-0"><span>${maintCategoryLabel(cat)}</span><span class="font-bold">${v.count}${v.downtimeMs ? ' · ⏱ ' + formatDurationMs(v.downtimeMs) : ''}</span></div>`).join('') : '<p class="text-gray-400 text-xs">Нет заявок за период</p>'}
+    ${s.byLine.length ? '<div class="text-[9px] font-black uppercase tracking-wide text-gray-400 mt-3 mb-1">По линиям (суммарное время простоя)</div>' + s.byLine.map(([line, v]) => `<div class="flex justify-between text-xs py-1 border-b border-gray-50 last:border-0"><span>Линия ${escapeHtmlProd(line)}</span><span class="font-bold">${formatDurationMs(v.downtimeMs)} (${v.count})</span></div>`).join('') : ''}
+  `;
+}
+
+// ---------- 2. Брак по сменам/линиям (shiftReports) ----------
+function computeLeadDefectStats(days) {
+  const since = leadStatsSince(days);
+  const list = (shiftReports || []).filter(r => r.ts >= since && typeof r.meters === 'number' && r.meters > 0);
+  const totalMeters = list.reduce((s, r) => s + (r.meters || 0), 0);
+  const totalDefect = list.reduce((s, r) => s + (r.defectMeters || 0), 0);
+  const overallPct = totalMeters ? Math.round(totalDefect / totalMeters * 1000) / 10 : null;
+  const byLine = {};
+  list.forEach(r => {
+    const lk = String(r.line || '—');
+    if (!byLine[lk]) byLine[lk] = { meters: 0, defect: 0, count: 0 };
+    byLine[lk].meters += (r.meters || 0); byLine[lk].defect += (r.defectMeters || 0); byLine[lk].count++;
+  });
+  const byLineRows = Object.entries(byLine)
+    .map(([line, v]) => ({ line, pct: v.meters ? Math.round(v.defect / v.meters * 1000) / 10 : 0, count: v.count }))
+    .sort((a, b) => b.pct - a.pct);
+  const byDay = {};
+  list.slice().sort((a, b) => a.ts - b.ts).forEach(r => {
+    const day = new Date(r.ts).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+    if (!byDay[day]) byDay[day] = { meters: 0, defect: 0 };
+    byDay[day].meters += (r.meters || 0); byDay[day].defect += (r.defectMeters || 0);
+  });
+  const trend = Object.entries(byDay).map(([day, v]) => ({ label: day, value: v.meters ? Math.round(v.defect / v.meters * 1000) / 10 : 0 }));
+  return { count: list.length, overallPct, byLineRows, trend, totalDefect, totalMeters };
+}
+function renderLeadDefectStats(days) {
+  const el = document.getElementById('lead-stats-defects');
+  if (!el) return;
+  const s = computeLeadDefectStats(days);
+  el.innerHTML = `
+    <div class="text-[11px] font-black uppercase text-gray-700">🚨 Брак · ${days} дн.</div>
+    ${s.count ? `
+      <div class="grid grid-cols-3 gap-2">
+        <div class="bg-gray-100 rounded-2xl p-3 text-center"><div class="text-xl font-black text-gray-700">${s.count}</div><div class="text-[8px] font-black uppercase text-gray-400">итогов смен</div></div>
+        <div class="bg-red-50 rounded-2xl p-3 text-center"><div class="text-xl font-black text-red-600">${s.overallPct != null ? s.overallPct + '%' : '—'}</div><div class="text-[8px] font-black uppercase text-red-400">брак в среднем</div></div>
+        <div class="bg-gray-100 rounded-2xl p-3 text-center"><div class="text-sm font-black text-gray-700 leading-tight">${Math.round(s.totalDefect)} м</div><div class="text-[8px] font-black uppercase text-gray-400">брака всего</div></div>
+      </div>
+      ${renderMiniTrendSvg(s.trend, { color: '#dc2626' })}
+      <div class="text-[9px] font-black uppercase tracking-wide text-gray-400 mt-2 mb-1">По линиям</div>
+      ${s.byLineRows.map(r => `<div class="flex justify-between text-xs py-1 border-b border-gray-50 last:border-0"><span>Линия ${escapeHtmlProd(r.line)}</span><span class="font-bold">${r.pct}% (${r.count} смен)</span></div>`).join('')}
+    ` : '<p class="text-gray-400 text-xs">Нет закрытых смен с указанным браком за период — вносится при закрытии смены во вкладке «Производство»</p>'}
+  `;
+}
+
+// ---------- 3. Выработка и скорость (lineRuns) ----------
+function computeLeadOutputStats(days) {
+  const since = leadStatsSince(days);
+  const runs = (lineRuns || []).filter(r => r.endTs && r.endTs >= since);
+  const byLine = {};
+  runs.forEach(r => {
+    const lk = String(r.line || '—');
+    if (!byLine[lk]) byLine[lk] = { meters: 0, rolls: 0, runs: 0, speedSum: 0, speedCount: 0 };
+    byLine[lk].meters += (r.meters || 0);
+    byLine[lk].rolls += (r.rolls || 0);
+    byLine[lk].runs++;
+    if (typeof r.speedMPerMin === 'number' && r.speedMPerMin > 0) { byLine[lk].speedSum += r.speedMPerMin; byLine[lk].speedCount++; }
+  });
+  const rows = Object.entries(byLine).map(([line, v]) => ({
+    line, meters: v.meters, rolls: v.rolls, runs: v.runs,
+    avgSpeed: v.speedCount ? Math.round(v.speedSum / v.speedCount * 10) / 10 : null
+  })).sort((a, b) => b.meters - a.meters);
+  return {
+    runsCount: runs.length,
+    totalMeters: runs.reduce((s, r) => s + (r.meters || 0), 0),
+    totalRolls: runs.reduce((s, r) => s + (r.rolls || 0), 0),
+    rows
+  };
+}
+function renderLeadOutputStats(days) {
+  const el = document.getElementById('lead-stats-output');
+  if (!el) return;
+  const s = computeLeadOutputStats(days);
+  el.innerHTML = `
+    <div class="text-[11px] font-black uppercase text-gray-700">🚀 Выработка и скорость · ${days} дн.</div>
+    ${s.runsCount ? `
+      <div class="grid grid-cols-2 gap-2">
+        <div class="bg-gray-100 rounded-2xl p-3 text-center"><div class="text-lg font-black text-gray-700">${Math.round(s.totalRolls)}</div><div class="text-[8px] font-black uppercase text-gray-400">рулонов (≈${Math.round(s.totalMeters)} м)</div></div>
+        <div class="bg-gray-100 rounded-2xl p-3 text-center"><div class="text-lg font-black text-gray-700">${s.runsCount}</div><div class="text-[8px] font-black uppercase text-gray-400">законченных артикулов</div></div>
+      </div>
+      <div class="text-[9px] font-black uppercase tracking-wide text-gray-400 mt-2 mb-1">По линиям</div>
+      ${s.rows.map(r => `<div class="flex justify-between text-xs py-1.5 border-b border-gray-50 last:border-0"><span>Линия ${escapeHtmlProd(r.line)}</span><span class="font-bold">${Math.round(r.rolls)} рул. · ${r.runs} арт.${r.avgSpeed ? ' · ~' + r.avgSpeed + ' м/мин' : ''}</span></div>`).join('')}
+      <p class="text-[8px] text-gray-400 leading-relaxed pt-1">Скорость — то, что вводится при «Линия поехала», а не независимый замер: метраж считается по ней же.</p>
+    ` : '<p class="text-gray-400 text-xs">Нет законченных забегов линии за период</p>'}
+  `;
+}
+
+// ---------- 4. Чек-листы приладки (prelaunchLog) ----------
+function computeLeadChecklistStats(days) {
+  const since = leadStatsSince(days);
+  const list = (prelaunchLog || []).filter(l => l.ts >= since);
+  const total = list.length;
+  const fullCount = list.filter(l => l.checkedCount === l.total).length;
+  const avgPct = total ? Math.round(list.reduce((s, l) => s + (l.total ? l.checkedCount / l.total : 0), 0) / total * 100) : null;
+  const missedByItem = PRELAUNCH_ITEMS.map(() => 0);
+  let withItemDetail = 0;
+  list.forEach(l => {
+    if (Array.isArray(l.items)) {
+      withItemDetail++;
+      l.items.forEach((checked, i) => { if (!checked && missedByItem[i] !== undefined) missedByItem[i]++; });
+    }
+  });
+  const missedRows = PRELAUNCH_ITEMS
+    .map((text, i) => ({ text, missed: missedByItem[i] }))
+    .filter(r => r.missed > 0)
+    .sort((a, b) => b.missed - a.missed);
+  return { total, fullCount, avgPct, missedRows, withItemDetail };
+}
+function renderLeadChecklistStats(days) {
+  const el = document.getElementById('lead-stats-checklist');
+  if (!el) return;
+  const s = computeLeadChecklistStats(days);
+  el.innerHTML = `
+    <div class="text-[11px] font-black uppercase text-gray-700">📋 Чек-листы приладки · ${days} дн.</div>
+    ${s.total ? `
+      <div class="grid grid-cols-3 gap-2">
+        <div class="bg-gray-100 rounded-2xl p-3 text-center"><div class="text-xl font-black text-gray-700">${s.total}</div><div class="text-[8px] font-black uppercase text-gray-400">сдач</div></div>
+        <div class="bg-emerald-50 rounded-2xl p-3 text-center"><div class="text-xl font-black text-emerald-700">${s.fullCount}</div><div class="text-[8px] font-black uppercase text-emerald-500">полностью</div></div>
+        <div class="bg-amber-50 rounded-2xl p-3 text-center"><div class="text-xl font-black text-amber-700">${s.avgPct != null ? s.avgPct + '%' : '—'}</div><div class="text-[8px] font-black uppercase text-amber-500">в среднем</div></div>
+      </div>
+      ${s.missedRows.length ? '<div class="text-[9px] font-black uppercase tracking-wide text-gray-400 mt-2 mb-1">Чаще всего не отмечают</div>' + s.missedRows.map(r => `<div class="flex justify-between gap-2 text-xs py-1 border-b border-gray-50 last:border-0"><span class="min-w-0 truncate">${escapeHtmlProd(r.text)}</span><span class="font-bold shrink-0">${r.missed}</span></div>`).join('') : '<p class="text-gray-400 text-xs mt-1">Пропущенных пунктов не найдено за период.</p>'}
+    ` : '<p class="text-gray-400 text-xs">Пока нет сдач чек-листа за период</p>'}
+  `;
+}
+
+// ---------- 5. Колористы — многодневный тренд (paintRequests) ----------
+function computeLeadColoristTrendStats(days) {
+  const since = leadStatsSince(days);
+  const list = (paintRequests || []).filter(r => r.status === 'done' && r.ts >= since && r.doneBy);
+  const byColorist = {};
+  list.forEach(r => {
+    const name = String(r.doneBy || '').trim() || 'Без имени';
+    if (!byColorist[name]) byColorist[name] = { count: 0, waitSum: 0, waitCount: 0, pourSum: 0, pourCount: 0 };
+    const startTs = (typeof r.inProgressTs === 'number') ? r.inProgressTs : r.ts;
+    const waitMs = startTs - r.ts;
+    const pourMs = (typeof r.doneTs === 'number') ? r.doneTs - startTs : null;
+    byColorist[name].count++;
+    if (Number.isFinite(waitMs) && waitMs >= 0) { byColorist[name].waitSum += waitMs; byColorist[name].waitCount++; }
+    if (Number.isFinite(pourMs) && pourMs >= 0) { byColorist[name].pourSum += pourMs; byColorist[name].pourCount++; }
+  });
+  const rows = Object.entries(byColorist).map(([name, v]) => ({
+    name, count: v.count,
+    avgWait: v.waitCount ? v.waitSum / v.waitCount : null,
+    avgPour: v.pourCount ? v.pourSum / v.pourCount : null
+  })).sort((a, b) => b.count - a.count);
+  return { total: list.length, rows };
+}
+function renderLeadColoristTrendStats(days) {
+  const el = document.getElementById('lead-stats-colorists');
+  if (!el) return;
+  const s = computeLeadColoristTrendStats(days);
+  el.innerHTML = `
+    <div class="text-[11px] font-black uppercase text-gray-700">🎨 Колористы · ${days} дн.</div>
+    ${s.total ? `
+      <div class="text-[9px] text-gray-400 -mt-1 mb-1">Всего закрыто заявок «нужна краска»: ${s.total}</div>
+      ${s.rows.map(r => `
+        <div class="flex items-center justify-between gap-2 py-1.5 border-b border-gray-50 last:border-0">
+          <span class="text-xs font-bold truncate">${escapeHtmlProd(r.name)}</span>
+          <span class="text-[10px] text-gray-500 shrink-0">${r.count} зая. · ожид. ${r.avgWait != null ? formatDurationMs(r.avgWait) : '—'} · налив ${r.avgPour != null ? formatDurationMs(r.avgPour) : '—'}</span>
+        </div>`).join('')}
+    ` : '<p class="text-gray-400 text-xs">Нет закрытых заявок «нужна краска» за период</p>'}
+  `;
+}
+
+// ---------- Общий рендер + видимость по роли ----------
+function renderLeadStatsSection() {
+  const section = document.getElementById('lead-stats-section');
+  if (!section) return;
+  const isLead = !!(currentUserProfile && currentUserProfile.role === 'shift_lead');
+  section.classList.toggle('hidden', !isLead);
+  if (!isLead) return;
+  const periodEl = document.getElementById('lead-stats-period');
+  const days = periodEl ? (parseInt(periodEl.value, 10) || 7) : 7;
+  renderLeadDowntimeStats(days);
+  renderLeadDefectStats(days);
+  renderLeadOutputStats(days);
+  renderLeadChecklistStats(days);
+  renderLeadColoristTrendStats(days);
+  const answerEl = document.getElementById('lead-stats-ask-answer');
+  if (answerEl) answerEl.classList.add('hidden');
+}
+
+// ---------- «Спросить статистику» — офлайн-разбор по ключевым словам ----------
+// Не настоящий ИИ: набор простых правил (как VOICE_COMMANDS у колориста
+// выше), которые угадывают, какой из пяти блоков нужен, считают его ответ
+// заново и прокручивают экран к нужной карточке. Работает без интернета.
+const LEAD_STATS_ASK_COMMANDS = [
+  { test: /прост\w*|поломк\w*|ремонт\w*/i, focus: 'lead-stats-downtime', answer: (days) => {
+      const s = computeLeadDowntimeStats(days);
+      if (!s.total) return `За ${days} дн. заявок на ремонт не было.`;
+      const worstLine = s.byLine[0];
+      return `За ${days} дн.: ${s.total} заявок, ${s.openCount} сейчас открыто, среднее время устранения ${s.mttrMs != null ? formatDurationMs(s.mttrMs) : '—'}.${worstLine ? ' Дольше всего стоит линия ' + worstLine[0] + ' (' + formatDurationMs(worstLine[1].downtimeMs) + ').' : ''}`;
+    } },
+  { test: /брак\w*/i, focus: 'lead-stats-defects', answer: (days) => {
+      const s = computeLeadDefectStats(days);
+      if (!s.count) return `За ${days} дн. нет закрытых смен с указанным браком.`;
+      const worst = s.byLineRows[0];
+      return `За ${days} дн. средний брак ${s.overallPct}% (${Math.round(s.totalDefect)} м из ${Math.round(s.totalMeters)} м).${worst ? ' Хуже всего линия ' + worst.line + ' — ' + worst.pct + '%.' : ''}`;
+    } },
+  { test: /скорост\w*|выработк\w*|рулон\w*|метраж\w*/i, focus: 'lead-stats-output', answer: (days) => {
+      const s = computeLeadOutputStats(days);
+      if (!s.runsCount) return `За ${days} дн. нет законченных забегов линии.`;
+      const best = s.rows[0];
+      return `За ${days} дн.: ${Math.round(s.totalRolls)} рул. (${s.runsCount} арт.).${best ? ' Больше всего сделала линия ' + best.line + ' — ' + Math.round(best.rolls) + ' рул.' : ''}`;
+    } },
+  { test: /чек.?лист\w*|приладк\w*/i, focus: 'lead-stats-checklist', answer: (days) => {
+      const s = computeLeadChecklistStats(days);
+      if (!s.total) return `За ${days} дн. чек-листы не сдавались.`;
+      const top = s.missedRows[0];
+      return `За ${days} дн.: ${s.total} сдач, в среднем ${s.avgPct}% пунктов, полностью — ${s.fullCount}.${top ? ' Чаще всего пропускают: «' + top.text + '» (' + top.missed + ' раз).' : ''}`;
+    } },
+  { test: /колорист\w*|краск\w*|замес\w*/i, focus: 'lead-stats-colorists', answer: (days) => {
+      const s = computeLeadColoristTrendStats(days);
+      if (!s.total) return `За ${days} дн. нет закрытых заявок «нужна краска».`;
+      const top = s.rows[0];
+      return `За ${days} дн. закрыто ${s.total} заявок.${top ? ' Больше всех — ' + top.name + ' (' + top.count + ').' : ''}`;
+    } }
+];
+function askLeadStats() {
+  const input = document.getElementById('lead-stats-ask-input');
+  const answerEl = document.getElementById('lead-stats-ask-answer');
+  if (!input || !answerEl) return;
+  const text = (input.value || '').trim();
+  if (!text) return;
+  const periodEl = document.getElementById('lead-stats-period');
+  const days = periodEl ? (parseInt(periodEl.value, 10) || 7) : 7;
+  const cmd = LEAD_STATS_ASK_COMMANDS.find(c => c.test.test(text));
+  answerEl.classList.remove('hidden');
+  if (!cmd) {
+    answerEl.textContent = 'Пока понимаю запросы про: простои, брак, скорость/выработку, чек-листы, колористов. Попробуйте, например, «брак по линиям».';
+    return;
+  }
+  answerEl.textContent = cmd.answer(days);
+  const focusEl = document.getElementById(cmd.focus);
+  if (focusEl) {
+    focusEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    focusEl.classList.add('ring-2', 'ring-blue-400');
+    setTimeout(() => focusEl.classList.remove('ring-2', 'ring-blue-400'), 1500);
+  }
 }
 
 // ===================================================================
@@ -16917,7 +17993,7 @@ setupBitrixAutoSync();
 setInterval(() => {
   const role = currentUserProfile && currentUserProfile.role;
   if (role === 'senior_printer') renderLineRunCard('printer', true);
-  if (role === 'shift_lead') renderLineRunCard('lead', true);
+  if (role === 'shift_lead') { renderLineRunCard('lead', true); renderShiftSpeedPlan(); renderShiftDefectLive(); }
 }, 30000);
 
 // ===== Крупный режим "весы рядом" =====
@@ -17253,9 +18329,30 @@ const KBD_SHORTCUTS = [
 ];
 
 function isKbdTypingContext(target) {
-  if (!target) return false;
-  const tag = (target.tagName || '').toLowerCase();
-  return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
+  // Проверяем и переданный target, и реально сфокусированный элемент —
+  // на некоторых мобильных браузерах/веб-вью event.target для клавиатурных
+  // событий может отличаться от document.activeElement.
+  const check = (el) => {
+    if (!el) return false;
+    const tag = (el.tagName || '').toLowerCase();
+    return tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable;
+  };
+  if (check(target)) return true;
+  if (check(document.activeElement)) return true;
+  // Если открыта любая модалка/попап (например, окно чата) — тоже считаем
+  // это «печатным» контекстом и не трогаем глобальные хоткеи, независимо
+  // от того, куда именно указывает фокус по мнению браузера.
+  const modalIds = [
+    'keyboard-shortcuts-modal', 'batch-compare-modal', 'signature-modal', 'report-conditions-modal',
+    'defect-photo-modal', 'vision-defect-modal', 'qr-modal', 'install-modal', 'login-modal',
+    'chat-modal', 'duplicate-article-modal', 'batch-checklist-modal',
+    'test-paint-line-modal', 'paint-line-modal'
+  ];
+  for (const id of modalIds) {
+    const el = document.getElementById(id);
+    if (el && !el.classList.contains('hidden')) return true;
+  }
+  return false;
 }
 
 function renderKeyboardShortcutsList() {
@@ -17310,10 +18407,14 @@ function closeTopmostOverlay() {
 }
 
 function handleGlobalKeyboardShortcut(event) {
+  if (event.isComposing) return; // не мешаем вводу через IME/составные клавиатуры
   if (event.key === 'Escape') { closeTopmostOverlay(); return; }
-  if (event.key === '?') { event.preventDefault(); openKeyboardShortcutsModal(); return; }
+  // Проверку "печатает ли пользователь" делаем СРАЗУ, до разбора '?', '!' и цифр —
+  // иначе символы, которые набираются через Shift (например "!" и "?"),
+  // могли перехватываться глобальным хоткеем прямо во время набора текста в чате.
   if (isKbdTypingContext(event.target)) return;
-  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+  if (event.key === '?') { event.preventDefault(); openKeyboardShortcutsModal(); return; }
 
   const num = parseInt(event.key, 10);
   if (!isNaN(num) && num >= 1 && num <= KBD_TAB_ORDER.length) {
