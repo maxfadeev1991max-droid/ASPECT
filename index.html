@@ -5213,12 +5213,16 @@ async function checkPaintAlertOnce() {
         // форму, стоило облаку хоть немного отстать с чтением.
         const lineRunsPendingConfirmed = !lineRunsPendingCloudIds.size || (remoteLineRuns && [...lineRunsPendingCloudIds].every(id => {
           const localRun = lineRuns.find(r => r.id === id);
-          return !localRun || isLineRunConfirmedByRemote(localRun, remoteLineRuns);
+          if (!localRun || isLineRunConfirmedByRemote(localRun, remoteLineRuns)) return true;
+          const since = lineRunsPendingSince[id];
+          return !!since && (Date.now() - since > LINE_RUNS_PENDING_TIMEOUT_MS);
         }));
         if (lineRunsPendingConfirmed && lineRunsRevisionAtFetch === lineRunsRevision) {
           lineRuns = remoteLineRuns || lineRuns;
           lineRunsPendingCloudIds.clear();
+          lineRunsPendingSince = {};
           savePendingIdSet(LINE_RUNS_PENDING_KEY, lineRunsPendingCloudIds);
+          savePendingSinceMap(LINE_RUNS_PENDING_SINCE_KEY, lineRunsPendingSince);
           saveLineRuns(lineRuns);
         }
       }
@@ -5254,14 +5258,55 @@ async function checkPaintAlertOnce() {
 // побеждает — как и остальная синхронизация в этом файле). Используется для
 // заказов / сырья / планового ТО, которые раньше вообще не покидали
 // localStorage конкретного устройства.
+// Поля, где записи — это объекты с уникальным `id`, и где реально бывает,
+// что НЕСКОЛЬКО устройств пишут в один и тот же массив почти одновременно
+// (например 3 печатника одновременно жмут «Линия поехала» на разных линиях).
+// Раньше пуш полностью ЗАТИРАЛ remote[field] локальным массивом — если два
+// человека пушили в течение одного цикла синхронизации, последний пуш
+// стирал забег/заказ, который только что записал кто-то другой (см. разбор
+// бага «статус линий сейчас» — старшие печатники видели «простаивает»,
+// хотя сами только что нажали «Линия поехала»). Для таких полей нужен
+// мёрдж по id, а не слепая перезапись всего массива.
+const CLOUD_ARRAY_MERGE_BY_ID_FIELDS = new Set(['lineRuns', 'productionOrders', 'plannedMaintenance', 'rawMaterials']);
+
+function mergeArrayForCloudPush(remoteArr, localArray) {
+  const remoteList = Array.isArray(remoteArr) ? remoteArr : [];
+  const localIds = new Set(localArray.map(x => x && x.id));
+  // Всё, что есть на сервере, но чего нет (пока) в нашем локальном массиве —
+  // это записи, добавленные/изменённые ДРУГИМИ устройствами уже после того,
+  // как мы в последний раз читали общую базу. Их нельзя терять — просто
+  // оставляем как есть. А для id, которые есть у нас локально, наша версия
+  // считается более свежей (мы её только что изменили) и побеждает.
+  const untouchedRemote = remoteList.filter(r => !localIds.has(r && r.id));
+  return untouchedRemote.concat(localArray);
+}
+
 async function syncArrayToCloud(field, localArray) {
   const cfg = sheetDbConfig || loadSheetDbConfig();
   if (!cfg || !cfg.url) return false;
+  const mergeById = CLOUD_ARRAY_MERGE_BY_ID_FIELDS.has(field);
   try {
-    const snapshotJson = JSON.stringify(localArray);
+    let mergedSnapshotJson = null;
     await pushCloudSnapshotWithRetry(
-      (remote) => { remote[field] = localArray; return true; },
-      (remote) => JSON.stringify(remote[field] || []) === snapshotJson
+      (remote) => {
+        if (mergeById) {
+          const merged = mergeArrayForCloudPush(remote[field], localArray);
+          remote[field] = merged;
+          mergedSnapshotJson = JSON.stringify(merged);
+        } else {
+          remote[field] = localArray;
+          mergedSnapshotJson = JSON.stringify(localArray);
+        }
+        return true;
+      },
+      (remote) => {
+        // Проверяем не побайтовое совпадение всего массива (при мёрдже он
+        // на сервере может отличаться порядком/чужими записями), а что
+        // КАЖДАЯ наша локальная запись реально долетела и сохранилась.
+        const arr = Array.isArray(remote[field]) ? remote[field] : [];
+        if (!mergeById) return JSON.stringify(arr) === mergedSnapshotJson;
+        return localArray.every(la => arr.some(ra => ra && ra.id === la.id && JSON.stringify(ra) === JSON.stringify(la)));
+      }
     );
     return true;
   } catch (e) { console.error(e); return false; }
@@ -13308,10 +13353,29 @@ let lineRunsCloudSyncing = false;
 // изменения, например до нажатия «Артикул закончен»).
 let lineRunsRevision = 0;
 let lineRunsPendingCloudIds = loadPendingIdSet(LINE_RUNS_PENDING_KEY);
+// Раньше, если запись почему-то НИКОГДА не подтверждалась облаком (например
+// её стёрло чужим пушем ДО того, как появился мёрдж по id, или сама Google
+// Таблица долго отставала), это блокировало приём вообще ЛЮБЫХ новых данных
+// с сервера навсегда — экран мог годами показывать «простаивает» / старое
+// состояние, пока кто-то не сделает ещё одно действие с этой же линией.
+// Держим время постановки в ожидание и через LINE_RUNS_PENDING_TIMEOUT_MS
+// сдаёмся ждать подтверждение и просто принимаем то, что реально в облаке —
+// лучше редкая мелкая нестыковка на пару минут, чем полная заморозка синка.
+const LINE_RUNS_PENDING_SINCE_KEY = 'colorist_line_runs_pending_since';
+const LINE_RUNS_PENDING_TIMEOUT_MS = 2 * 60 * 1000;
+function loadPendingSinceMap(key) {
+  try { return JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (e) { return {}; }
+}
+function savePendingSinceMap(key, map) {
+  try { localStorage.setItem(key, JSON.stringify(map)); } catch (e) {}
+}
+let lineRunsPendingSince = loadPendingSinceMap(LINE_RUNS_PENDING_SINCE_KEY);
 function markLineRunPending(id) {
   lineRunsRevision++;
   lineRunsPendingCloudIds.add(id);
+  lineRunsPendingSince[id] = Date.now();
   savePendingIdSet(LINE_RUNS_PENDING_KEY, lineRunsPendingCloudIds);
+  savePendingSinceMap(LINE_RUNS_PENDING_SINCE_KEY, lineRunsPendingSince);
 }
 function isLineRunConfirmedByRemote(localRun, remoteRuns) {
   const remoteRun = (remoteRuns || []).find(r => r.id === localRun.id);
