@@ -934,7 +934,7 @@
     </div>
     <div id="online-users-bar" class="flex flex-wrap items-center justify-center gap-1 mb-1.5"></div>
     <div id="sync-status-badge" class="text-[8px] text-blue-200 -mt-1 mb-1 text-center">🔴 Локально (без общей базы) — нажмите ☁️, чтобы подключить</div>
-    <div class="text-[7px] text-white/40 text-center -mt-1 mb-1">сборка: 2026-09-05 15:20 (мёрдж lineRuns по id)</div>
+    <div class="text-[7px] text-white/40 text-center -mt-1 mb-1">сборка: 2026-09-05 16:05 (защита от стирания базы + фикс таймаута)</div>
     <div id="sync-stale-warning" class="hidden text-[8px] text-red-300 -mt-1 mb-1 text-center font-black"></div>
     <div id="voice-settings-panel" class="hidden bg-slate-800/90 rounded-xl px-3 py-3 mt-1 space-y-2 text-left">
       <div class="flex items-center gap-2">
@@ -4554,8 +4554,21 @@ async function pushToSheetDb() {
   if (!cfg || !cfg.url) return;
   try {
     let remote = null;
-    try { remote = await fetchCloudSnapshot(); } catch (e) { /* если не удалось подтянуть — всё равно отправим локальные, лучше так чем ничего */ }
-    if (!remote) remote = { recipes: [], presence: [], deletedRecipeIds: [], chat: [], paintAlert: null, testPaintAlert: null, paintRequests: [], baseMultipliers: {}, lotMultipliers: {}, pigmentLotMultipliers: {} };
+    try { remote = await fetchCloudSnapshot(); } catch (e) { /* обработаем ниже */ }
+    if (!remote) {
+      // РАНЬШЕ здесь подставлялся "пустой" объект-заглушка (без lineRuns,
+      // productionOrders, maintRequests, plannedMaintenance, rawMaterials,
+      // shiftReports и т.д.), и он целиком уходил в облако вместо
+      // непрочитанного снимка — это стирало ВООБЩЕ ВСЮ общую базу одним
+      // сохранением рецепта, если в момент сохранения случился сетевой сбой
+      // или Google Apps Script не успел ответить (именно так объяснялось
+      // внезапное "всё слетело и сбросилось" у начальника смены). Рецепт
+      // важен, но не важнее производственных данных всей смены — раз свежий
+      // снимок подтянуть не удалось, безопаснее пропустить отправку сейчас:
+      // рецепт остаётся сохранённым локально и уйдёт в общую базу при
+      // следующей успешной попытке (ручной ☁️ или очередном автосинке).
+      throw new Error('Не удалось прочитать общую базу перед отправкой — рецепт сохранён локально, отправка отложена');
+    }
     const localList = await getAllLocalRecipes();
     const merged = mergeRecipeLists(remote.recipes, localList, remote.deletedRecipeIds);
     remote.recipes = merged;
@@ -5216,7 +5229,14 @@ async function checkPaintAlertOnce() {
           const localRun = lineRuns.find(r => r.id === id);
           if (!localRun || isLineRunConfirmedByRemote(localRun, remoteLineRuns)) return true;
           const since = lineRunsPendingSince[id];
-          return !!since && (Date.now() - since > LINE_RUNS_PENDING_TIMEOUT_MS);
+          // Если метки времени вообще нет — это «ожидание» осталось ещё от
+          // версии ДО этого таймаута (записано старым markLineRunPending без
+          // отметки времени). У такой записи нет своего возраста, чтобы с
+          // ним сравнивать, а раз она уже пережила обновление приложения —
+          // считаем её заведомо просроченной, а не бессрочной: иначе именно
+          // старые зависшие id из прошлых тестов НИКОГДА не отпустятся, и
+          // весь смысл таймаута теряется для тех, кому он нужнее всего.
+          return since ? (Date.now() - since > LINE_RUNS_PENDING_TIMEOUT_MS) : true;
         }));
         if (lineRunsPendingConfirmed && lineRunsRevisionAtFetch === lineRunsRevision) {
           lineRuns = remoteLineRuns || lineRuns;
