@@ -1005,6 +1005,9 @@
       <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 0 0 0 18h1.2a1.8 1.8 0 0 0 0-3.6h-.7a1.8 1.8 0 0 1 0-3.6h3.8A4.7 4.7 0 0 0 21 9.1C19.8 5.5 16.4 3 12 3Z"/><circle cx="7.5" cy="10" r=".8" fill="currentColor"/><circle cx="10" cy="6.8" r=".8" fill="currentColor"/><circle cx="14" cy="6.5" r=".8" fill="currentColor"/><circle cx="17" cy="9" r=".8" fill="currentColor"/></svg></span><span>Колорист</span>
       <span id="tab-badge-colorist" class="tab-badge hidden">0</span>
     </button>
+    <button id="tab-btn-printer" onclick="switchView('printer')" class="tab-btn btn-active bg-gray-100 text-gray-500">
+      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><rect x="7" y="14" width="10" height="6"/></svg></span><span>Ст. Печатник</span>
+    </button>
     <button id="tab-btn-history" onclick="switchView('history')" class="tab-btn btn-active bg-gray-100 text-gray-500">
       <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 9h6M9 13h6M9 17h4"/></svg></span><span>История</span>
     </button>
@@ -1035,103 +1038,7 @@
   </div>
 
   <div id="view-colorist" class="p-4 space-y-6 relative">
-    <!-- ===== Заявки «Нужна краска»: печатник → колорист =====
-         Отдельная лёгкая очередь поверх общей базы (поле paintRequests),
-         не путать с paintAlert ("налил, забирай") — здесь наоборот, печатник
-         сначала просит нужный цвет на своей линии, колорист берёт заявку в
-         работу и по готовности жмёт «Налил» — это одновременно закрывает
-         заявку и шлёт печатнику этой линии тот самый полноэкранный алерт.
-         Начальнику смены отдельно сигналим, если заявка висит без движения
-         дольше настроенного порога простоя (по умолчанию 15 минут, меняется
-         кнопкой "⏳ Порог простоя" над очередью).
-         Блок стоит ПЕРВЫМ в вкладке — это то, с чем колорист/печатник
-         работает постоянно; панель блокировки линий (ниже) нужна редко. -->
-    <div id="paint-requests-wrap" class="hidden bg-white border border-gray-100 rounded-2xl p-4 space-y-3">
-      <div id="paint-request-form" class="hidden space-y-2">
-        <h3 class="text-sm font-black text-gray-800 uppercase">🧴 Нужна краска</h3>
-        <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Заявка уйдёт колористу и встанет в общую очередь. Как только цвет будет налит, вы получите обычное уведомление «Краска налита» на весь экран.</p>
-
-        <input type="text" id="paint-request-article" placeholder="Артикул / название цвета" class="w-full p-3 bg-gray-50 rounded-2xl outline-none font-bold text-sm border border-transparent focus:border-blue-300">
-        <div class="flex gap-2">
-          <input type="text" id="paint-request-qty" placeholder="Кол-во (напр. 5 кг)" class="w-28 shrink-0 p-2.5 bg-gray-50 rounded-2xl outline-none font-bold text-[11px] border border-transparent focus:border-blue-300">
-          <input type="text" id="paint-request-note" placeholder="Комментарий (необязательно)" class="flex-1 p-2.5 bg-gray-50 rounded-2xl outline-none font-bold text-[11px] border border-transparent focus:border-blue-300">
-        </div>
-        <!-- Срочность заявки: та же логика, что и у заявки на ремонт (🟢🟡🔴) —
-             печатник помечает, стоит ли линия прямо сейчас. Это просто пометка
-             на карточке заявки — очередь у колориста всегда строго по порядку
-             поступления (см. sortPaintRequestsForQueue), кто заказал первым,
-             тот и наверху. -->
-        <div class="space-y-1">
-          <div class="text-[8px] font-bold text-gray-400 uppercase text-center">Срочность</div>
-          <div id="paint-request-urgency-toggle" class="flex gap-1.5">
-            <button type="button" data-urgency="low" onclick="setPaintRequestUrgency('low')" class="flex-1 py-2 rounded-xl text-[9px] font-black uppercase btn-active">🟢 Не срочно</button>
-            <button type="button" data-urgency="medium" onclick="setPaintRequestUrgency('medium')" class="flex-1 py-2 rounded-xl text-[9px] font-black uppercase btn-active">🟡 В течение смены</button>
-            <button type="button" data-urgency="high" onclick="setPaintRequestUrgency('high')" class="flex-1 py-2 rounded-xl text-[9px] font-black uppercase btn-active">🔴 Стоит линия</button>
-          </div>
-        </div>
-        <button id="paint-request-submit-btn" onclick="submitPaintRequest()" class="w-full bg-blue-600 text-white py-3 rounded-2xl btn-active text-[11px] font-black uppercase">📨 Отправить заявку</button>
-        <div id="paint-request-mine-list" class="space-y-1.5 pt-1 max-h-56 overflow-y-auto pr-1"></div>
-
-        <!-- ===== Калькулятор % брака по рулонам — отдельный вспомогательный
-             инструмент, никак не связанный с заказом краски выше. Раньше стоял
-             ПЕРЕД полями заявки и визуально сливался с ней — печатники путали,
-             что из этого нужно заполнять, чтобы заказать краску. Теперь: (1) стоит
-             ПОСЛЕ формы заявки, (2) свёрнут по умолчанию и открывается по клику,
-             (3) на отдельной серой плашке с чёткой подписью "доп. инструмент", —
-             так форма заявки на краску остаётся первой и единственной, что видит
-             печатник по умолчанию. -->
-        <div class="pt-2 mt-2 border-t border-dashed border-gray-200">
-          <button type="button" onclick="togglePaintDefectCalc()" class="w-full flex items-center justify-between gap-2 bg-gray-50 rounded-2xl p-3">
-            <span class="text-[10px] font-black text-gray-500 uppercase flex items-center gap-1.5">🧮 Калькулятор % брака <span class="font-normal normal-case text-gray-400">· доп. инструмент, к заказу краски не относится</span></span>
-            <span id="paint-defectcalc-chevron" class="text-gray-400 shrink-0">▾</span>
-          </button>
-          <div id="paint-defectcalc-box" class="hidden bg-white rounded-2xl border border-gray-100 p-4 space-y-3 mt-2">
-            <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Для печатников и мастеров смены: введите сумму метража (по счётчику линии) и фактическое количество сделанных рулонов — приложение само посчитает % брака и рулоны брака. База — рулон 10,05 м.</p>
-            <div class="grid grid-cols-2 gap-2">
-              <button id="defectcalc-type-1005-btn" onclick="setDefectCalcRollType('1005')" class="py-2.5 rounded-xl text-[10px] font-black uppercase mode-btn-active">Рулон 10,05 м</button>
-              <button id="defectcalc-type-25-btn" onclick="setDefectCalcRollType('25')" class="py-2.5 rounded-xl text-[10px] font-black uppercase mode-btn-inactive">Рулон 25 м</button>
-            </div>
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="text-[9px] font-black uppercase text-gray-400 block mb-1">Сумма метража, м</label>
-                <input type="number" id="defectcalc-meters" step="0.01" min="0" inputmode="decimal" placeholder="Напр. 950" oninput="calcRollDefect()" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[13px] font-bold">
-              </div>
-              <div>
-                <label id="defectcalc-rolls-label" class="text-[9px] font-black uppercase text-gray-400 block mb-1">Кол-во рулонов (10,05 м), шт</label>
-                <input type="number" id="defectcalc-rolls" step="1" min="0" inputmode="decimal" placeholder="Напр. 90" oninput="calcRollDefect()" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[13px] font-bold">
-              </div>
-            </div>
-            <div id="defectcalc-result" class="hidden space-y-2 pt-1">
-              <div class="grid grid-cols-3 gap-2 text-center">
-                <div class="bg-gray-50 rounded-xl p-2"><div class="text-[8px] text-gray-400 uppercase leading-tight">Рулонов<br>по метражу</div><div id="defectcalc-goodrolls" class="text-sm font-black text-gray-800 mt-0.5">—</div></div>
-                <div class="bg-red-50 rounded-xl p-2"><div class="text-[8px] text-red-400 uppercase leading-tight">% брака</div><div id="defectcalc-percent" class="text-base font-black text-red-600 mt-0.5">—</div></div>
-                <div class="bg-red-50 rounded-xl p-2"><div class="text-[8px] text-red-400 uppercase leading-tight">Рулонов<br>брака</div><div id="defectcalc-defrolls" class="text-sm font-black text-red-600 mt-0.5">—</div></div>
-              </div>
-              <p id="defectcalc-detail" class="text-[8px] text-gray-400 leading-relaxed"></p>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div id="paint-request-queue" class="hidden space-y-2">
-        <div class="flex items-center justify-between gap-2">
-          <h3 class="text-sm font-black text-gray-800 uppercase">🧴 Заявки от печатников</h3>
-          <div class="flex items-center gap-2 shrink-0">
-            <button id="clear-done-paint-requests-btn" onclick="clearDonePaintRequests()" class="hidden text-[9px] font-black uppercase text-gray-400">🗑 Очистить готовые</button>
-            <button id="overdue-threshold-toggle-btn" onclick="toggleOverdueThresholdPanel()" class="hidden text-[9px] font-black uppercase text-gray-400">⏳ Порог простоя</button>
-          </div>
-        </div>
-        <div id="overdue-threshold-panel" class="hidden bg-gray-50 rounded-xl p-3 space-y-2">
-          <p class="text-[9px] text-gray-400 leading-relaxed">Через сколько минут ожидания заявка считается простоем линии и об этом сигналим начальнику смены (звук + push).</p>
-          <div class="flex items-center gap-2">
-            <input type="number" id="overdue-threshold-input" min="1" max="180" step="1" class="w-20 p-2 bg-white rounded-xl outline-none font-bold text-sm border border-gray-200 text-center">
-            <span class="text-[10px] text-gray-500 font-bold">мин</span>
-            <button onclick="saveOverdueThreshold()" class="ml-auto bg-blue-600 text-white text-[10px] font-black uppercase px-3 py-2 rounded-xl">Сохранить</button>
-          </div>
-        </div>
-        <div id="paint-request-queue-list" class="space-y-1.5"></div>
-      </div>
-    </div>
-
+    <!-- Блок «Нужна краска» + калькулятор % брака перенесены во вкладку «Ст. Печатник» (см. #view-printer) -->
     <!-- ===== Блокировка вкладки «Колорист» на время внесения данных =====
          Пока колорист/начальник смены/мастер УПП вносят эталон+замес+рецепт
          по конкретной линии, старший печатник этой линии видит вкладку
@@ -1800,6 +1707,123 @@
         <div id="recipes" class="space-y-4"></div>
     </div>
     </div>
+  </div>
+
+
+  <!-- ===== Вкладка «Ст. Печатник» =====
+       Отдельный экран для старших печатников: заявка «Нужна краска» (или
+       очередь заявок — для колориста/начальника смены/мастера УПП/директора),
+       калькулятор % брака и гонка смены — всё, что нужно печатнику на смене,
+       без необходимости заходить во вкладку «Колорист». -->
+  <div id="view-printer" class="hidden p-4 space-y-6">
+    <!-- ===== Заявки «Нужна краска»: печатник → колорист =====
+         Отдельная лёгкая очередь поверх общей базы (поле paintRequests),
+         не путать с paintAlert ("налил, забирай") — здесь наоборот, печатник
+         сначала просит нужный цвет на своей линии, колорист берёт заявку в
+         работу и по готовности жмёт «Налил» — это одновременно закрывает
+         заявку и шлёт печатнику этой линии тот самый полноэкранный алерт.
+         Начальнику смены отдельно сигналим, если заявка висит без движения
+         дольше настроенного порога простоя (по умолчанию 15 минут, меняется
+         кнопкой "⏳ Порог простоя" над очередью).
+         Блок стоит ПЕРВЫМ в вкладке — это то, с чем колорист/печатник
+         работает постоянно; панель блокировки линий (ниже) нужна редко. -->
+    <div id="paint-requests-wrap" class="hidden bg-white border border-gray-100 rounded-2xl p-4 space-y-3">
+      <div id="paint-request-form" class="hidden space-y-2">
+        <h3 class="text-sm font-black text-gray-800 uppercase">🧴 Нужна краска</h3>
+        <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Заявка уйдёт колористу и встанет в общую очередь. Как только цвет будет налит, вы получите обычное уведомление «Краска налита» на весь экран.</p>
+
+        <input type="text" id="paint-request-article" placeholder="Артикул / название цвета" class="w-full p-3 bg-gray-50 rounded-2xl outline-none font-bold text-sm border border-transparent focus:border-blue-300">
+        <div class="flex gap-2">
+          <input type="text" id="paint-request-qty" placeholder="Кол-во (напр. 5 кг)" class="w-28 shrink-0 p-2.5 bg-gray-50 rounded-2xl outline-none font-bold text-[11px] border border-transparent focus:border-blue-300">
+          <input type="text" id="paint-request-note" placeholder="Комментарий (необязательно)" class="flex-1 p-2.5 bg-gray-50 rounded-2xl outline-none font-bold text-[11px] border border-transparent focus:border-blue-300">
+        </div>
+        <!-- Срочность заявки: та же логика, что и у заявки на ремонт (🟢🟡🔴) —
+             печатник помечает, стоит ли линия прямо сейчас. Это просто пометка
+             на карточке заявки — очередь у колориста всегда строго по порядку
+             поступления (см. sortPaintRequestsForQueue), кто заказал первым,
+             тот и наверху. -->
+        <div class="space-y-1">
+          <div class="text-[8px] font-bold text-gray-400 uppercase text-center">Срочность</div>
+          <div id="paint-request-urgency-toggle" class="flex gap-1.5">
+            <button type="button" data-urgency="low" onclick="setPaintRequestUrgency('low')" class="flex-1 py-2 rounded-xl text-[9px] font-black uppercase btn-active">🟢 Не срочно</button>
+            <button type="button" data-urgency="medium" onclick="setPaintRequestUrgency('medium')" class="flex-1 py-2 rounded-xl text-[9px] font-black uppercase btn-active">🟡 В течение смены</button>
+            <button type="button" data-urgency="high" onclick="setPaintRequestUrgency('high')" class="flex-1 py-2 rounded-xl text-[9px] font-black uppercase btn-active">🔴 Стоит линия</button>
+          </div>
+        </div>
+        <button id="paint-request-submit-btn" onclick="submitPaintRequest()" class="w-full bg-blue-600 text-white py-3 rounded-2xl btn-active text-[11px] font-black uppercase">📨 Отправить заявку</button>
+        <div id="paint-request-mine-list" class="space-y-1.5 pt-1 max-h-56 overflow-y-auto pr-1"></div>
+
+        <!-- ===== Калькулятор % брака по рулонам — отдельный вспомогательный
+             инструмент, никак не связанный с заказом краски выше. Раньше стоял
+             ПЕРЕД полями заявки и визуально сливался с ней — печатники путали,
+             что из этого нужно заполнять, чтобы заказать краску. Теперь: (1) стоит
+             ПОСЛЕ формы заявки, (2) свёрнут по умолчанию и открывается по клику,
+             (3) на отдельной серой плашке с чёткой подписью "доп. инструмент", —
+             так форма заявки на краску остаётся первой и единственной, что видит
+             печатник по умолчанию. -->
+        <div class="pt-2 mt-2 border-t border-dashed border-gray-200">
+          <button type="button" onclick="togglePaintDefectCalc()" class="w-full flex items-center justify-between gap-2 bg-gray-50 rounded-2xl p-3">
+            <span class="text-[10px] font-black text-gray-500 uppercase flex items-center gap-1.5">🧮 Калькулятор % брака <span class="font-normal normal-case text-gray-400">· доп. инструмент, к заказу краски не относится</span></span>
+            <span id="paint-defectcalc-chevron" class="text-gray-400 shrink-0">▾</span>
+          </button>
+          <div id="paint-defectcalc-box" class="hidden bg-white rounded-2xl border border-gray-100 p-4 space-y-3 mt-2">
+            <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Для печатников и мастеров смены: введите сумму метража (по счётчику линии) и фактическое количество сделанных рулонов — приложение само посчитает % брака и рулоны брака. База — рулон 10,05 м.</p>
+            <div class="grid grid-cols-2 gap-2">
+              <button id="defectcalc-type-1005-btn" onclick="setDefectCalcRollType('1005')" class="py-2.5 rounded-xl text-[10px] font-black uppercase mode-btn-active">Рулон 10,05 м</button>
+              <button id="defectcalc-type-25-btn" onclick="setDefectCalcRollType('25')" class="py-2.5 rounded-xl text-[10px] font-black uppercase mode-btn-inactive">Рулон 25 м</button>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-[9px] font-black uppercase text-gray-400 block mb-1">Сумма метража, м</label>
+                <input type="number" id="defectcalc-meters" step="0.01" min="0" inputmode="decimal" placeholder="Напр. 950" oninput="calcRollDefect()" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[13px] font-bold">
+              </div>
+              <div>
+                <label id="defectcalc-rolls-label" class="text-[9px] font-black uppercase text-gray-400 block mb-1">Кол-во рулонов (10,05 м), шт</label>
+                <input type="number" id="defectcalc-rolls" step="1" min="0" inputmode="decimal" placeholder="Напр. 90" oninput="calcRollDefect()" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[13px] font-bold">
+              </div>
+            </div>
+            <div id="defectcalc-result" class="hidden space-y-2 pt-1">
+              <div class="grid grid-cols-3 gap-2 text-center">
+                <div class="bg-gray-50 rounded-xl p-2"><div class="text-[8px] text-gray-400 uppercase leading-tight">Рулонов<br>по метражу</div><div id="defectcalc-goodrolls" class="text-sm font-black text-gray-800 mt-0.5">—</div></div>
+                <div class="bg-red-50 rounded-xl p-2"><div class="text-[8px] text-red-400 uppercase leading-tight">% брака</div><div id="defectcalc-percent" class="text-base font-black text-red-600 mt-0.5">—</div></div>
+                <div class="bg-red-50 rounded-xl p-2"><div class="text-[8px] text-red-400 uppercase leading-tight">Рулонов<br>брака</div><div id="defectcalc-defrolls" class="text-sm font-black text-red-600 mt-0.5">—</div></div>
+              </div>
+              <p id="defectcalc-detail" class="text-[8px] text-gray-400 leading-relaxed"></p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="paint-request-queue" class="hidden space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <h3 class="text-sm font-black text-gray-800 uppercase">🧴 Заявки от печатников</h3>
+          <div class="flex items-center gap-2 shrink-0">
+            <button id="clear-done-paint-requests-btn" onclick="clearDonePaintRequests()" class="hidden text-[9px] font-black uppercase text-gray-400">🗑 Очистить готовые</button>
+            <button id="overdue-threshold-toggle-btn" onclick="toggleOverdueThresholdPanel()" class="hidden text-[9px] font-black uppercase text-gray-400">⏳ Порог простоя</button>
+          </div>
+        </div>
+        <div id="overdue-threshold-panel" class="hidden bg-gray-50 rounded-xl p-3 space-y-2">
+          <p class="text-[9px] text-gray-400 leading-relaxed">Через сколько минут ожидания заявка считается простоем линии и об этом сигналим начальнику смены (звук + push).</p>
+          <div class="flex items-center gap-2">
+            <input type="number" id="overdue-threshold-input" min="1" max="180" step="1" class="w-20 p-2 bg-white rounded-xl outline-none font-bold text-sm border border-gray-200 text-center">
+            <span class="text-[10px] text-gray-500 font-bold">мин</span>
+            <button onclick="saveOverdueThreshold()" class="ml-auto bg-blue-600 text-white text-[10px] font-black uppercase px-3 py-2 rounded-xl">Сохранить</button>
+          </div>
+        </div>
+        <div id="paint-request-queue-list" class="space-y-1.5"></div>
+      </div>
+    </div>
+
+    <!-- Клон виджета "Гонка смены" (оригинал — во вкладке «Панель», см.
+         #dash-shift-race-wrap). renderShiftRace() обновляет оба набора
+         элементов одновременно (см. функцию в JS). -->
+    <div id="printer-shift-race-wrap" class="bg-gradient-to-br from-indigo-700 via-blue-700 to-cyan-600 rounded-2xl p-4 space-y-3 text-white shadow-lg overflow-hidden relative">
+      <div class="flex items-center justify-between gap-2">
+        <div class="text-[11px] font-black uppercase tracking-wide flex items-center gap-1.5">🏁 Гонка смены</div>
+        <span id="printer-shift-race-time" class="text-[9px] font-bold text-white/70"></span>
+      </div>
+      <div id="printer-shift-race-lines" class="space-y-2"></div>
+    </div>
+
   </div>
 
   <!-- Журнал правок: пошаговая лента того, что делали с замесом, пока подгоняли
@@ -10661,6 +10685,7 @@ function switchView(view) {
   if (view !== 'vision' && typeof visionStream !== 'undefined' && visionStream) stopVisionCamera();
 
   const colorist = document.getElementById('view-colorist');
+  const printer = document.getElementById('view-printer');
   const history = document.getElementById('view-history');
   const stats = document.getElementById('view-stats');
   const preview = document.getElementById('view-preview');
@@ -10671,6 +10696,7 @@ function switchView(view) {
   const help = document.getElementById('view-help');
   const dashboard = document.getElementById('view-dashboard');
   const btnColorist = document.getElementById('tab-btn-colorist');
+  const btnPrinter = document.getElementById('tab-btn-printer');
   const btnHistory = document.getElementById('tab-btn-history');
   const btnStats = document.getElementById('tab-btn-stats');
   const btnPreview = document.getElementById('tab-btn-preview');
@@ -10682,9 +10708,14 @@ function switchView(view) {
   const btnDashboard = document.getElementById('tab-btn-dashboard');
   const activeClasses = ['bg-blue-700', 'text-white'];
   const inactiveClasses = ['bg-gray-100', 'text-gray-500'];
-  [colorist, history, stats, preview, learning, production, vision, pigments, help, dashboard].forEach(v => v && v.classList.add('hidden'));
-  [btnColorist, btnHistory, btnStats, btnPreview, btnLearning, btnProduction, btnVision, btnPigments, btnHelp, btnDashboard].forEach(b => { if (b) { b.classList.remove(...activeClasses); b.classList.add(...inactiveClasses); } });
-  if (view === 'dashboard') {
+  [colorist, printer, history, stats, preview, learning, production, vision, pigments, help, dashboard].forEach(v => v && v.classList.add('hidden'));
+  [btnColorist, btnPrinter, btnHistory, btnStats, btnPreview, btnLearning, btnProduction, btnVision, btnPigments, btnHelp, btnDashboard].forEach(b => { if (b) { b.classList.remove(...activeClasses); b.classList.add(...inactiveClasses); } });
+  if (view === 'printer') {
+    printer.classList.remove('hidden');
+    btnPrinter.classList.remove(...inactiveClasses); btnPrinter.classList.add(...activeClasses);
+    renderPaintRequestsSection();
+    if (typeof renderShiftRace === 'function') renderShiftRace();
+  } else if (view === 'dashboard') {
     dashboard.classList.remove('hidden');
     btnDashboard.classList.remove(...inactiveClasses); btnDashboard.classList.add(...activeClasses);
     renderDashboardView();
@@ -10766,9 +10797,18 @@ const HELP_SECTIONS = [
       { q: 'Сохранить / 🔁 Повторить как вчера', a: '«Сохранить» кладёт текущий рецепт в библиотеку (для истории, статистики и подсказок). «Повторить как вчера» подставляет последний сохранённый рецепт этого артикула целиком, без пересчёта с нуля.' },
       { q: '✅ Сдать партию (чек-лист)', a: 'Открывает финальный чек-лист перед тем, как считать партию готовой и сданной.' },
       { q: 'WhatsApp / Telegram / Печать', a: 'Отправляет текущий рецепт в мессенджер или готовит его к печати/сохранению как PDF — без необходимости переписывать вручную.' },
+      { q: '🔒 Внесение данных по линиям', a: 'Панель вверху вкладки: колорист, начальник смены или мастер УПП нажимают «Начать внесение» по своей линии перед тем, как вносить эталон/замес/рецепт. Пока лок активен, старший печатник этой линии видит вместо формы экран «Идёт внесение данных» и не может ничего менять — заказ краски при этом продолжает работать как обычно (она теперь во вкладке «Ст. Печатник», а не здесь). По окончании нажимается «Завершить»; если коллега забыл это сделать, снять чужую блокировку может кто угодно, кроме старшего печатника, кнопкой «Освободить». Другие линии эта блокировка не затрагивает.' }
+    ]
+  },
+  {
+    id: 'printer',
+    icon: 'printer',
+    title: 'Ст. Печатник',
+    items: [
       { q: '🧴 Нужна краска (заявка от печатника)', a: 'Старший печатник заказывает краску прямо на этой вкладке: артикул/цвет, количество (напр. «5 кг»), комментарий и срочность — 🟢 не срочно, 🟡 в течение смены, 🔴 стоит линия. Заявка уходит в общую очередь колористу и начальнику смены. Печатник видит статус своей заявки, сколько заявок ждёт впереди, и получает уведомление на весь экран, когда краска налита — или короткое уведомление, если заявку отменили.' },
-      { q: 'Очередь заявок у колориста / начальника смены', a: 'Показывает все активные заявки от печатников по всем линиям строго по порядку поступления — кто заказал раньше, тот выше в списке и его нужно брать первым. Отметка срочности (🟢🟡🔴) видна на самой карточке заявки, но порядок в очереди не меняет. Просроченные (дольше порога простоя) подсвечиваются красным. «Взял» переводит заявку в работу, «Налил» одновременно закрывает заявку и шлёт печатнику алерт «Краска налита».' },
-      { q: '🔒 Внесение данных по линиям', a: 'Панель вверху вкладки: колорист, начальник смены или мастер УПП нажимают «Начать внесение» по своей линии перед тем, как вносить эталон/замес/рецепт. Пока лок активен, старший печатник этой линии видит вместо формы экран «Идёт внесение данных» и не может ничего менять — заказ краски при этом продолжает работать как обычно. По окончании нажимается «Завершить»; если коллега забыл это сделать, снять чужую блокировку может кто угодно, кроме старшего печатника, кнопкой «Освободить». Другие линии эта блокировка не затрагивает.' }
+      { q: 'Очередь заявок у колориста / начальника смены', a: 'Колорист, начальник смены и мастер УПП видят на этой же вкладке все активные заявки от печатников по всем линиям строго по порядку поступления — кто заказал раньше, тот выше в списке и его нужно брать первым. Отметка срочности (🟢🟡🔴) видна на самой карточке заявки, но порядок в очереди не меняет. Просроченные (дольше порога простоя) подсвечиваются красным. «Взял» переводит заявку в работу, «Налил» одновременно закрывает заявку и шлёт печатнику алерт «Краска налита». Начальник цеха и производственный директор видят ту же очередь в режиме только для чтения.' },
+      { q: '🧮 Калькулятор % брака', a: 'Вспомогательный инструмент для печатников и мастеров смены, свёрнутый по умолчанию: введите сумму метража (по счётчику линии) и фактическое количество сделанных рулонов — приложение само посчитает % брака и рулоны брака. К заказу краски выше отношения не имеет.' },
+      { q: '🏁 Гонка смены', a: 'Показывает, сколько рулонов уже выкатала каждая из линий за текущую смену (с поправкой на брак), и кто кого догоняет — тот же виджет, что и на вкладке «Панель».' }
     ]
   },
   {
@@ -10862,7 +10902,8 @@ const SVG_ICON_PATHS = {
   brain: '<path d="M9.5 5.2A3.2 3.2 0 0 1 15 7.4a3.4 3.4 0 0 1 2.6 5.6A3.2 3.2 0 0 1 15 18.8a3.2 3.2 0 0 1-6-.8A3.3 3.3 0 0 1 7.6 12a3.2 3.2 0 0 1 1.9-6.8Z"/><path d="M9 9.2h.1M14.8 10h.1M10 15.1h.1M15 15h.1M12 5v2M12 17v2"/>',
   factory: '<path d="M3 20V8l5 3V7l5 3V5l8 4v11H3Z"/><path d="M7 20v-4h3v4M13 20v-4h3v4M18 12h1M18 15h1"/>',
   eye: '<path d="M2.5 12s3.5-5 9.5-5 9.5 5 9.5 5-3.5 5-9.5 5-9.5-5-9.5-5Z"/><circle cx="12" cy="12" r="2.5"/>',
-  flask: '<path d="M9 3h6M10 3v6l-5.2 8.6A2.2 2.2 0 0 0 6.7 21h10.6a2.2 2.2 0 0 0 1.9-3.4L14 9V3"/><path d="M7.2 15h9.6M8.6 12.5h6.8"/>'
+  flask: '<path d="M9 3h6M10 3v6l-5.2 8.6A2.2 2.2 0 0 0 6.7 21h10.6a2.2 2.2 0 0 0 1.9-3.4L14 9V3"/><path d="M7.2 15h9.6M8.6 12.5h6.8"/>',
+  printer: '<path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><rect x="7" y="14" width="10" height="6"/>'
 };
 function renderSvgIcon(name, extraClass = '') {
   return `<svg class="icon-svg ${extraClass}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${SVG_ICON_PATHS[name] || SVG_ICON_PATHS.help || ''}</svg>`;
@@ -14039,16 +14080,17 @@ function celebrateMilestoneOnce(key, thresholds, currentValue, message) {
   return reached;
 }
 function renderShiftRace() {
-  const wrap = document.getElementById('dash-shift-race-lines');
-  const timeEl = document.getElementById('dash-shift-race-time');
-  if (!wrap) return;
+  // Виджет дублируется во вкладке «Панель» (dash-shift-race-*) и во вкладке
+  // «Ст. Печатник» (printer-shift-race-*) — обновляем оба набора элементов
+  // одинаковым содержимым, чтобы цифры нигде не расходились.
+  const wraps = [document.getElementById('dash-shift-race-lines'), document.getElementById('printer-shift-race-lines')].filter(Boolean);
+  const timeEls = [document.getElementById('dash-shift-race-time'), document.getElementById('printer-shift-race-time')].filter(Boolean);
+  if (!wraps.length) return;
   const { start, end, isDay } = getCurrentShiftWindow();
   const startMs = start.getTime();
-  if (timeEl) {
-    const remainingMin = Math.max(0, Math.round((end.getTime() - Date.now()) / 60000));
-    const rH = Math.floor(remainingMin / 60), rM = remainingMin % 60;
-    timeEl.textContent = `${isDay ? '☀️' : '🌙'} до конца ${rH} ч ${rM} мин`;
-  }
+  const remainingMin = Math.max(0, Math.round((end.getTime() - Date.now()) / 60000));
+  const rH = Math.floor(remainingMin / 60), rM = remainingMin % 60;
+  timeEls.forEach(timeEl => { timeEl.textContent = `${isDay ? '☀️' : '🌙'} до конца ${rH} ч ${rM} мин`; });
   const lines = ['1', '2', '3', '4'].map(n => {
     const meters = getShiftProducedMetersForLine(n, startMs);
     const rolls = meters / METERS_PER_ROLL;
@@ -14061,11 +14103,11 @@ function renderShiftRace() {
   const leaderNet = ranked[0] ? ranked[0].netRolls : 0;
   const totalRolls = lines.reduce((s, l) => s + l.rolls, 0);
   if (!totalRolls) {
-    wrap.innerHTML = `<div class="text-[10px] text-white/70 text-center py-1.5">Пока никто не выкатил ни одного рулона в этой смене — гонка стартует с первым рулоном 🚀</div>`;
+    wraps.forEach(wrap => { wrap.innerHTML = `<div class="text-[10px] text-white/70 text-center py-1.5">Пока никто не выкатил ни одного рулона в этой смене — гонка стартует с первым рулоном 🚀</div>`; });
     return;
   }
   const medals = ['🥇', '🥈', '🥉', '4️⃣'];
-  wrap.innerHTML = ranked.map((l, idx) => {
+  const raceHtml = ranked.map((l, idx) => {
     const pct = leaderNet ? Math.max(4, Math.round((l.netRolls / leaderNet) * 100)) : 4;
     const barColor = SHIFT_RACE_COLORS[idx % SHIFT_RACE_COLORS.length];
     let subLabel;
@@ -14099,6 +14141,7 @@ function renderShiftRace() {
       <div class="text-[9px] leading-snug">${subLabel}</div>
     </div>`;
   }).join('');
+  wraps.forEach(wrap => { wrap.innerHTML = raceHtml; });
 }
 // ===== Личный зачёт печатников: по имени (createdBy у забега линии), а не
 // по номеру линии, с поправкой на качество и с личными рекордами =====
