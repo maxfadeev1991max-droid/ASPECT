@@ -3187,10 +3187,11 @@
             <button type="button" onclick="setLoginRole('colorist')" id="login-role-colorist" class="py-3 rounded-xl font-black uppercase text-xs border-2 border-blue-500 bg-blue-600">Колорист</button>
             <button type="button" onclick="setLoginRole('shift_lead')" id="login-role-shift_lead" class="py-3 rounded-xl font-black uppercase text-xs border-2 border-slate-600 bg-white/5">Начальник смены</button>
             <button type="button" onclick="setLoginRole('senior_printer')" id="login-role-senior_printer" class="py-3 rounded-xl font-black uppercase text-xs border-2 border-slate-600 bg-white/5">Старший печатник</button>
+            <button type="button" onclick="setLoginRole('printer')" id="login-role-printer" class="py-3 rounded-xl font-black uppercase text-xs border-2 border-slate-600 bg-white/5">Печатник</button>
             <button type="button" onclick="setLoginRole('production_director')" id="login-role-production_director" class="py-3 rounded-xl font-black uppercase text-xs border-2 border-slate-600 bg-white/5">Производственный директор</button>
             <button type="button" onclick="setLoginRole('shop_chief')" id="login-role-shop_chief" class="py-3 rounded-xl font-black uppercase text-xs border-2 border-slate-600 bg-white/5">Начальник цеха</button>
             <button type="button" onclick="setLoginRole('upp_master')" id="login-role-upp_master" class="py-3 rounded-xl font-black uppercase text-xs border-2 border-slate-600 bg-white/5">Мастер УПП</button>
-            <button type="button" onclick="setLoginRole('general_director')" id="login-role-general_director" class="py-3 rounded-xl font-black uppercase text-xs border-2 border-slate-600 bg-white/5 col-span-2">Генеральный директор</button>
+            <button type="button" onclick="setLoginRole('general_director')" id="login-role-general_director" class="py-3 rounded-xl font-black uppercase text-xs border-2 border-slate-600 bg-white/5">Генеральный директор</button>
           </div>
         </div>
         <div id="login-line-wrap" class="hidden">
@@ -4107,6 +4108,7 @@ function saveUserProfileToStorage(p) {
 function roleLabel(role) {
   if (role === 'shift_lead') return 'Начальник смены';
   if (role === 'senior_printer') return 'Старший печатник';
+  if (role === 'printer') return 'Печатник';
   if (role === 'production_director') return 'Производственный директор';
   if (role === 'shop_chief') return 'Начальник цеха';
   if (role === 'upp_master') return 'Мастер УПП';
@@ -4121,6 +4123,7 @@ function roleLabel(role) {
 function roleShortLabel(role) {
   if (role === 'shift_lead') return 'нач. смены';
   if (role === 'senior_printer') return 'ст. печатник';
+  if (role === 'printer') return 'печатник';
   if (role === 'production_director') return 'произв. директор';
   if (role === 'shop_chief') return 'нач. цеха';
   if (role === 'upp_master') return 'мастер УПП';
@@ -4130,6 +4133,7 @@ function roleShortLabel(role) {
 function roleDotClass(role) {
   if (role === 'shift_lead') return 'bg-amber-400';
   if (role === 'senior_printer') return 'bg-sky-400';
+  if (role === 'printer') return 'bg-teal-400';
   if (role === 'production_director') return 'bg-violet-400';
   if (role === 'shop_chief') return 'bg-rose-400';
   if (role === 'upp_master') return 'bg-cyan-400';
@@ -4139,6 +4143,7 @@ function roleDotClass(role) {
 function roleBubbleClass(role) {
   if (role === 'shift_lead') return 'bg-amber-50 border border-amber-200 text-gray-800';
   if (role === 'senior_printer') return 'bg-sky-50 border border-sky-200 text-gray-800';
+  if (role === 'printer') return 'bg-teal-50 border border-teal-200 text-gray-800';
   if (role === 'production_director') return 'bg-violet-50 border border-violet-200 text-gray-800';
   if (role === 'shop_chief') return 'bg-rose-50 border border-rose-200 text-gray-800';
   if (role === 'upp_master') return 'bg-cyan-50 border border-cyan-200 text-gray-800';
@@ -4148,6 +4153,7 @@ function roleBubbleClass(role) {
 function roleNameColorClass(role) {
   if (role === 'shift_lead') return 'text-amber-600';
   if (role === 'senior_printer') return 'text-sky-600';
+  if (role === 'printer') return 'text-teal-600';
   if (role === 'production_director') return 'text-violet-600';
   if (role === 'shop_chief') return 'text-rose-600';
   if (role === 'upp_master') return 'text-cyan-600';
@@ -4178,6 +4184,7 @@ function setLoginRole(role) {
     ['login-role-colorist', 'colorist', ''],
     ['login-role-shift_lead', 'shift_lead', ''],
     ['login-role-senior_printer', 'senior_printer', ''],
+    ['login-role-printer', 'printer', ''],
     ['login-role-production_director', 'production_director', ''],
     ['login-role-shop_chief', 'shop_chief', ''],
     ['login-role-upp_master', 'upp_master', ''],
@@ -4187,10 +4194,10 @@ function setLoginRole(role) {
     const btn = document.getElementById(id);
     if (btn) btn.className = (span ? span + ' ' : '') + 'py-3 rounded-xl font-black uppercase text-xs border-2 ' + (role === key ? 'border-blue-500 bg-blue-600 text-white' : 'border-slate-600 bg-white/5');
   });
-  // Линию выбирает только печатник — остальным ролям она не нужна (начальник
-  // смены и колорист видят/шлют оповещения без привязки к конкретной линии).
+  // Линию выбирает печатник и старший печатник — остальным ролям она не нужна
+  // (начальник смены и колорист видят/шлют оповещения без привязки к линии).
   const lineWrap = document.getElementById('login-line-wrap');
-  if (lineWrap) lineWrap.classList.toggle('hidden', role !== 'senior_printer');
+  if (lineWrap) lineWrap.classList.toggle('hidden', role !== 'senior_printer' && role !== 'printer');
 }
 function setLoginLine(line) {
   pendingLoginLine = line || null;
@@ -4202,8 +4209,8 @@ function setLoginLine(line) {
 function saveLoginProfile() {
   const name = (document.getElementById('login-name-input').value || '').trim();
   if (!name) { toast('Введите имя, чтобы войти в личный кабинет.'); return; }
-  if (pendingLoginRole === 'senior_printer' && !pendingLoginLine) { toast('Выберите линию, на которой вы работаете.'); return; }
-  currentUserProfile = { name, role: pendingLoginRole, line: pendingLoginRole === 'senior_printer' ? pendingLoginLine : null };
+  if ((pendingLoginRole === 'senior_printer' || pendingLoginRole === 'printer') && !pendingLoginLine) { toast('Выберите линию, на которой вы работаете.'); return; }
+  currentUserProfile = { name, role: pendingLoginRole, line: (pendingLoginRole === 'senior_printer' || pendingLoginRole === 'printer') ? pendingLoginLine : null };
   saveUserProfileToStorage(currentUserProfile);
   renderUserBadge();
   closeLoginModal();
@@ -4223,6 +4230,51 @@ function logoutProfile() {
 function isShiftLead() {
   return !!(currentUserProfile && currentUserProfile.role === 'shift_lead');
 }
+// Обычный печатник (не старший) — самая урезанная роль: видит только
+// заказ краски (заявку «Нужна краска») и чат, больше никаких вкладок и
+// функций ему не показываем нигде в приложении.
+function isPlainPrinter() {
+  return !!(currentUserProfile && currentUserProfile.role === 'printer');
+}
+// Прячем весь верхний ряд вкладок и принудительно держим печатника на
+// экране «Ст. Печатник» (там же живёт форма заказа краски) — так он
+// физически не может попасть на другие вкладки в обход кнопок навигации.
+function applyPlainPrinterViewLock() {
+  const tabbar = document.getElementById('app-tabbar');
+  if (!tabbar) return;
+  if (isPlainPrinter()) {
+    // У обычного печатника нет выбора вкладок вообще — сразу и навсегда
+    // экран «Заказ краски», без верхнего ряда вкладок и без разворачивания
+    // шапки с остальными переключателями.
+    tabbar.classList.add('hidden');
+    const extraToggle = document.getElementById('header-extra-toggle');
+    if (extraToggle) extraToggle.classList.add('hidden');
+    const headerCollapsible = document.getElementById('header-collapsible');
+    if (headerCollapsible) headerCollapsible.classList.add('hidden');
+    switchView('printer');
+    // Внутри вкладки «Ст. Печатник» у обычного печатника скрываем всё,
+    // что не относится к заказу краски (гонка смены, передача смены,
+    // ресурс клише) — по требованию: только заказ краски и чат.
+    const raceWrap = document.getElementById('printer-shift-race-wrap');
+    if (raceWrap) raceWrap.classList.add('hidden');
+    const handoverWrap = document.getElementById('handover-submit-btn');
+    if (handoverWrap && handoverWrap.closest('.bg-white')) handoverWrap.closest('.bg-white').classList.add('hidden');
+    const resourceWrap = document.getElementById('resource-counter-wrap');
+    if (resourceWrap) resourceWrap.classList.add('hidden');
+    const defectCalcBlock = document.getElementById('paint-defectcalc-box');
+    if (defectCalcBlock && defectCalcBlock.closest('.pt-2')) defectCalcBlock.closest('.pt-2').classList.add('hidden');
+  } else {
+    const extraToggle = document.getElementById('header-extra-toggle');
+    if (extraToggle) extraToggle.classList.remove('hidden');
+    // Возвращаем обычное поведение сворачиваемой шапки/вкладок для всех
+    // остальных ролей (как было до входа под печатником).
+    const el = document.getElementById('header-collapsible');
+    let collapsed = true;
+    try { collapsed = localStorage.getItem('colorist_header_collapsed') !== '0'; } catch (e) {}
+    if (el) el.classList.toggle('hidden', collapsed);
+    tabbar.classList.toggle('hidden', collapsed);
+  }
+}
 function applyRolePermissions() {
   // Перерисовываем список, если он уже загружен — чтобы кнопка удаления
   // появилась/исчезла сразу после смены роли, без повторного поиска.
@@ -4236,7 +4288,7 @@ function renderUserBadge() {
   if (compact) compact.textContent = currentUserProfile ? ('👤 ' + currentUserProfile.name) : '👤 Войти';
   if (!badge) return;
   if (currentUserProfile) {
-    const lineSuffix = (currentUserProfile.role === 'senior_printer' && currentUserProfile.line) ? (' (линия ' + currentUserProfile.line + ')') : '';
+    const lineSuffix = ((currentUserProfile.role === 'senior_printer' || currentUserProfile.role === 'printer') && currentUserProfile.line) ? (' (линия ' + currentUserProfile.line + ')') : '';
     badge.innerHTML = '👤 ' + escapeHtmlProd(currentUserProfile.name) + ' <span class="opacity-70">· ' + roleLabel(currentUserProfile.role) + lineSuffix + '</span>';
     const masterEl = document.getElementById('master-name');
     if (masterEl && !masterEl.value) masterEl.value = currentUserProfile.name;
@@ -4256,11 +4308,22 @@ function renderUserBadge() {
   // ещё и очередь заявок "нужна краска" — она нужна вообще всем ролям
   // (колористу и начальнику смены — очередь, печатнику — статус своих
   // заявок), поэтому опрос запускаем при любом входе в личный кабинет.
-  if (currentUserProfile) {
-    startPaintAlertPolling();
-  } else {
-    stopPaintAlertPolling();
-  }
+  // ИСПРАВЛЕНО: раньше опрос общей базы запускался только после входа в
+  // личный кабинет (см. currentUserProfile ниже). Но «🚦 Статус линий
+  // сейчас» и «🏁 Гонка смены» рендерятся ВСЕМ, даже без логина (см.
+  // renderDashboardView — эти два блока не спрятаны за проверкой role).
+  // Из-за этого на устройстве, где никто не вошёл в личный кабинет
+  // (например, открыли в браузере на компьютере просто посмотреть),
+  // виджет визуально был на экране, но навсегда замирал на том, что
+  // случайно оказалось в localStorage этого браузера при открытии
+  // страницы — свежие данные из облака туда никогда не попадали, хотя
+  // само облако было настроено и работало нормально. Теперь опрос
+  // стартует всегда, при любом открытии страницы, независимо от логина.
+  startPaintAlertPolling();
+  // Обычный печатник — самая урезанная роль (только заказ краски и чат) —
+  // запираем на единственном экране при каждой перерисовке бейджа
+  // (вход/выход/восстановление сессии при загрузке страницы).
+  applyPlainPrinterViewLock();
 }
 
 // Раз в 30 секунд (и сразу при входе / возврате в приложение) отправляем в общую
@@ -4329,7 +4392,7 @@ function renderOnlineUsers(presence) {
   bar.innerHTML = '<span class="text-[8px] text-blue-200 opacity-70 mr-1">Онлайн:</span>' + online.map(p => {
     return '<span class="inline-flex items-center gap-1 bg-slate-800/70 rounded-full px-2 py-0.5 text-[8px] font-bold">' +
       '<span class="w-1.5 h-1.5 rounded-full ' + roleDotClass(p.role) + '"></span>' +
-      escapeHtmlProd(p.name) + ' <span class="opacity-60">(' + roleShortLabel(p.role) + (p.role === 'senior_printer' && p.line ? ', линия ' + p.line : '') + ')</span></span>';
+      escapeHtmlProd(p.name) + ' <span class="opacity-60">(' + roleShortLabel(p.role) + ((p.role === 'senior_printer' || p.role === 'printer') && p.line ? ', линия ' + p.line : '') + ')</span></span>';
   }).join('');
 }
 
@@ -5425,7 +5488,7 @@ function renderColoristLockUI() {
   }
 }
 function checkCancelledOwnRequests() {
-  if (!currentUserProfile || currentUserProfile.role !== 'senior_printer' || !currentUserProfile.line) return;
+  if (!currentUserProfile || (currentUserProfile.role !== 'senior_printer' && currentUserProfile.role !== 'printer') || !currentUserProfile.line) return;
   let changed = false;
   paintRequests.filter(r => r.status === 'cancelled' && String(r.line) === String(currentUserProfile.line)).forEach(r => {
     if (!alertedCancelledRequestIds.has(r.id)) {
@@ -5440,7 +5503,7 @@ function checkCancelledOwnRequests() {
 }
 
 async function submitPaintRequest() {
-  if (!currentUserProfile || currentUserProfile.role !== 'senior_printer') { toast('Отправить заявку может только печатник, вошедший в личный кабинет со своей линией.'); return; }
+  if (!currentUserProfile || (currentUserProfile.role !== 'senior_printer' && currentUserProfile.role !== 'printer')) { toast('Отправить заявку может только печатник, вошедший в личный кабинет со своей линией.'); return; }
   if (!currentUserProfile.line) { toast('У вас не выбрана линия — зайдите заново в личный кабинет (👤) и укажите линию.'); return; }
   const articleEl = document.getElementById('paint-request-article');
   const noteEl = document.getElementById('paint-request-note');
@@ -5789,7 +5852,7 @@ function renderPaintRequestsSection() {
   // при любом изменении заявок «Нужна краска», а не только по таймеру опроса.
   if (role === 'shift_lead' && typeof renderLeadColoristStats === 'function') renderLeadColoristStats();
 
-  if (role === 'senior_printer') {
+  if (role === 'senior_printer' || role === 'printer') {
     wrap.classList.remove('hidden');
     document.getElementById('paint-request-form').classList.remove('hidden');
     document.getElementById('paint-request-queue').classList.add('hidden');
@@ -6089,13 +6152,13 @@ function sendShiftDigestNow() {
 }
 function applyIncomingPaintAlert(alert) {
   const role = currentUserProfile && currentUserProfile.role;
-  if (role !== 'shift_lead' && role !== 'senior_printer' && role !== 'upp_master') return;
+  if (role !== 'shift_lead' && role !== 'senior_printer' && role !== 'upp_master' && role !== 'printer') return;
   if (!alert || !alert.ts) return;
   if (alert.ts <= shownPaintAlertTs) return; // это уведомление уже показывали на этом устройстве
   // Печатник видит только оповещения со своей линии (выбранной при входе в
   // личный кабинет) — начальник смены отвечает за все линии сразу, поэтому
   // получает оповещение при любой линии.
-  if (role === 'senior_printer' && currentUserProfile.line && alert.line && String(alert.line) !== String(currentUserProfile.line)) {
+  if ((role === 'senior_printer' || role === 'printer') && currentUserProfile.line && alert.line && String(alert.line) !== String(currentUserProfile.line)) {
     shownPaintAlertTs = Math.min(alert.ts, Date.now() + ALERT_CLOCK_SKEW_ALLOWANCE_MS);
     saveShownPaintAlertTs(shownPaintAlertTs);
     return;
@@ -6127,10 +6190,10 @@ function hidePaintAlert() {
 }
 function applyIncomingTestPaintAlert(alert) {
   const role = currentUserProfile && currentUserProfile.role;
-  if (role !== 'shift_lead' && role !== 'senior_printer' && role !== 'upp_master') return;
+  if (role !== 'shift_lead' && role !== 'senior_printer' && role !== 'upp_master' && role !== 'printer') return;
   if (!alert || !alert.ts) return;
   if (alert.ts <= shownTestPaintAlertTs) return; // это уведомление уже показывали на этом устройстве
-  if (role === 'senior_printer' && currentUserProfile.line && alert.line && String(alert.line) !== String(currentUserProfile.line)) {
+  if ((role === 'senior_printer' || role === 'printer') && currentUserProfile.line && alert.line && String(alert.line) !== String(currentUserProfile.line)) {
     shownTestPaintAlertTs = Math.min(alert.ts, Date.now() + ALERT_CLOCK_SKEW_ALLOWANCE_MS);
     saveShownTestPaintAlertTs(shownTestPaintAlertTs);
     return;
@@ -10811,6 +10874,11 @@ function applyStoredDarkTheme() {
 
 // Переключатель вкладок «Колорист» / «История правок»
 function switchView(view) {
+  // Обычному печатнику доступна только вкладка «Ст. Печатник» (там же форма
+  // заказа краски) — какая бы вкладка ни была запрошена, принудительно
+  // остаёмся на ней. Это подстраховка на случай прямого вызова switchView
+  // из другого места приложения, а не только защита кнопок вкладок.
+  if (isPlainPrinter() && view !== 'printer') view = 'printer';
   // Живая камера контроля брака жрёт батарею и держит индикатор камеры —
   // гасим её при уходе с вкладки «Контроль брака» на любую другую, как и
   // liveStream гасится в других местах приложения.
@@ -14352,6 +14420,58 @@ function startLineRun(prefix) {
   lineRunsCloudSyncing = true;
   syncArrayToCloud('lineRuns', lineRuns).finally(() => { lineRunsCloudSyncing = false; });
 }
+// Ручная цель по текущему артикулу (в рулонах) — на случай, если по этому
+// артикулу ещё нет заказа в плане УПП (findOrderForRun ничего не находит) и
+// поэтому не из чего посчитать «осталось/закончит». Приоритет всё равно у
+// плана: если заказ найден, ручная цель в расчёте игнорируется (см.
+// renderLineRunCard), чтобы цифры не расходились между виджетами.
+function setLineRunTargetRolls(prefix, id) {
+  const run = lineRuns.find(r => r.id === id);
+  if (!run) return;
+  const input = prompt('Сколько всего рулонов нужно сделать по этому артикулу?\n(оставьте поле пустым, чтобы убрать цель)', run.manualTargetRolls ? String(run.manualTargetRolls) : '');
+  if (input === null) return;
+  const trimmed = input.trim();
+  if (!trimmed) { run.manualTargetRolls = null; }
+  else {
+    const val = parseFloat(trimmed.replace(',', '.'));
+    if (isNaN(val) || val <= 0) { toast('Не понял число рулонов.'); return; }
+    run.manualTargetRolls = val;
+  }
+  saveLineRuns(lineRuns);
+  markLineRunPending(id);
+  lineRunsCloudSyncing = true;
+  syncArrayToCloud('lineRuns', lineRuns).finally(() => { lineRunsCloudSyncing = false; });
+  renderLineRunCard(prefix);
+}
+// Желаемое время завершения текущего артикула — по нему считается требуемая
+// средняя скорость (см. renderLineRunCard), чтобы печатник/начальник смены
+// сразу видели, нужно ли ускориться или можно сбавить и всё равно успеть.
+// Если введённое время уже прошло сегодня — считаем, что имелось в виду
+// завтра (иначе «успеть к 8:00», введённое в 14:00, выглядело бы как
+// «уже опоздали на 6 часов», что почти всегда не то, что имел в виду человек).
+function setLineRunDeadline(prefix, id) {
+  const run = lineRuns.find(r => r.id === id);
+  if (!run) return;
+  const currentVal = run.desiredFinishTs ? new Date(run.desiredFinishTs).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '';
+  const input = prompt('К какому времени нужно закончить этот артикул?\nФормат ЧЧ:ММ, например 18:30 (пусто — убрать срок)', currentVal);
+  if (input === null) return;
+  const trimmed = input.trim();
+  if (!trimmed) { run.desiredFinishTs = null; }
+  else {
+    const match = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+    const hh = match ? parseInt(match[1], 10) : NaN, mm = match ? parseInt(match[2], 10) : NaN;
+    if (!match || hh > 23 || mm > 59) { toast('Не понял время — введите в формате ЧЧ:ММ, например 18:30.'); return; }
+    const d = new Date();
+    d.setHours(hh, mm, 0, 0);
+    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+    run.desiredFinishTs = d.getTime();
+  }
+  saveLineRuns(lineRuns);
+  markLineRunPending(id);
+  lineRunsCloudSyncing = true;
+  syncArrayToCloud('lineRuns', lineRuns).finally(() => { lineRunsCloudSyncing = false; });
+  renderLineRunCard(prefix);
+}
 function updateLineRunSpeed(prefix, id) {
   const run = lineRuns.find(r => r.id === id);
   if (!run) return;
@@ -14364,6 +14484,25 @@ function updateLineRunSpeed(prefix, id) {
   renderLineRunCard(prefix);
   lineRunsCloudSyncing = true;
   syncArrayToCloud('lineRuns', lineRuns).finally(() => { lineRunsCloudSyncing = false; });
+}
+// Полная отмена забега, начатого по ошибке (например, перепутали линию или
+// артикул при нажатии «▶️ Линия поехала»). В отличие от stopLineRun() —
+// ничего не считает в метраж/рулоны и не засчитывает в план заказов, а
+// просто убирает запись из массива целиком, как будто её и не было, и сразу
+// отправляет обновлённый (уже без неё) массив в общую базу — иначе через
+// пару секунд обычный опрос (checkPaintAlertOnce) вернёт её обратно с
+// телефона/другого устройства, которое ещё не знает об отмене.
+function cancelLineRun(prefix, id) {
+  const run = lineRuns.find(r => r.id === id);
+  if (!run) return;
+  if (!confirm(`Отменить запуск «${run.article}» на линии ${run.line}?\nЗапись будет удалена полностью, ничего не засчитается в выработку.`)) return;
+  lineRuns = lineRuns.filter(r => r.id !== id);
+  saveLineRuns(lineRuns);
+  markLineRunPending(id);
+  lineRunsCloudSyncing = true;
+  syncArrayToCloud('lineRuns', lineRuns).finally(() => { lineRunsCloudSyncing = false; });
+  toast('Забег отменён — линия снова свободна.');
+  renderLineRunCard(prefix);
 }
 function stopLineRun(prefix, id) {
   const run = lineRuns.find(r => r.id === id);
@@ -15071,27 +15210,60 @@ function renderLineRunCard(prefix, passive) {
   const estMeters = active.speedMPerMin != null ? Math.round((offsetMeters + active.speedMPerMin * (elapsedMs / 60000)) * 10) / 10 : (offsetMeters || null);
   const estRolls = estMeters != null ? Math.round(estMeters / METERS_PER_ROLL * 10) / 10 : null;
   const order = findOrderForRun(active.line, active.article);
+  const orderTargetMeters = order ? parseFloat(order.qty) : NaN;
+  const hasOrderTarget = !isNaN(orderTargetMeters) && orderTargetMeters > 0;
+  const manualTargetMeters = active.manualTargetRolls ? active.manualTargetRolls * METERS_PER_ROLL : NaN;
+  // План УПП — приоритетный источник цели (та же цифра, что в «Заказах»);
+  // ручная цель — запасной вариант для артикулов, которых ещё нет в плане.
+  const targetMeters = hasOrderTarget ? orderTargetMeters : ((!isNaN(manualTargetMeters) && manualTargetMeters > 0) ? manualTargetMeters : null);
   let progressHtml = '';
-  if (order) {
-    const target = parseFloat(order.qty);
-    if (target) {
-      const targetRolls = Math.round(target / METERS_PER_ROLL * 10) / 10;
-      const madeMeters = estMeters != null ? estMeters : 0;
-      const remainingMeters = Math.max(0, Math.round((target - madeMeters) * 10) / 10);
-      const remainingRolls = Math.round(remainingMeters / METERS_PER_ROLL * 10) / 10;
-      let etaHtml = '';
-      if (active.speedMPerMin && remainingMeters > 0) {
-        const etaMs = Date.now() + (remainingMeters / active.speedMPerMin) * 60000;
-        const etaDate = new Date(etaMs);
-        const sameDay = etaDate.toDateString() === new Date().toDateString();
-        const etaStr = etaDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) + (sameDay ? '' : ' (' + etaDate.toLocaleDateString('ru-RU') + ')');
-        etaHtml = ` · закончит ориентировочно в ${etaStr}`;
-      } else if (remainingMeters <= 0) {
-        etaHtml = ' · план по этому артикулу уже выполнен';
+  let remainingMeters = null;
+  if (targetMeters) {
+    const targetRolls = Math.round(targetMeters / METERS_PER_ROLL * 10) / 10;
+    const madeMeters = estMeters != null ? estMeters : 0;
+    remainingMeters = Math.max(0, Math.round((targetMeters - madeMeters) * 10) / 10);
+    const remainingRolls = Math.round(remainingMeters / METERS_PER_ROLL * 10) / 10;
+    let etaHtml = '';
+    if (active.speedMPerMin && remainingMeters > 0) {
+      const remainingMin = remainingMeters / active.speedMPerMin;
+      const rH = Math.floor(remainingMin / 60), rM = Math.round(remainingMin % 60);
+      const etaDate = new Date(Date.now() + remainingMin * 60000);
+      const sameDay = etaDate.toDateString() === new Date().toDateString();
+      const etaStr = etaDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) + (sameDay ? '' : ' (' + etaDate.toLocaleDateString('ru-RU') + ')');
+      etaHtml = ` · ехать ещё ~${rH} ч ${rM} мин · закончит ~в ${etaStr}`;
+    } else if (remainingMeters <= 0) {
+      etaHtml = ' · план по этому артикулу уже выполнен';
+    }
+    progressHtml = `<div class="text-[9px] text-emerald-600">Цель${hasOrderTarget ? ' (план)' : ' (задана вручную)'}: ${targetRolls} рул. (${Math.round(targetMeters)} м) · осталось ~${remainingRolls} рул. (${remainingMeters} м)${etaHtml}</div>`;
+  }
+  // Нужная скорость, чтобы успеть к желаемому времени (см. setLineRunDeadline) —
+  // тот же принцип, что и у «Скорость под план смены» начальника смены
+  // (renderShiftSpeedPlan), только не на всю смену/линии сразу, а именно на
+  // остаток ЭТОГО артикула, чтобы печатник сразу видел, ускоряться или можно
+  // сбавить обороты.
+  let speedAdviceHtml = '';
+  if (targetMeters && active.desiredFinishTs && remainingMeters != null && remainingMeters > 0) {
+    const remainingMinToDeadline = (active.desiredFinishTs - Date.now()) / 60000;
+    const deadlineStr = new Date(active.desiredFinishTs).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    if (remainingMinToDeadline <= 0) {
+      speedAdviceHtml = `<div class="text-[9px] font-black text-red-600">⏰ Срок (${deadlineStr}) уже прошёл, а по плану ещё ~${Math.round(remainingMeters / METERS_PER_ROLL * 10) / 10} рул. — договоритесь о новом сроке.</div>`;
+    } else {
+      const neededSpeed = Math.round(remainingMeters / remainingMinToDeadline * 10) / 10;
+      const curSpeed = active.speedMPerMin || 0;
+      const diff = Math.round((neededSpeed - curSpeed) * 10) / 10;
+      if (!active.speedMPerMin) {
+        speedAdviceHtml = `<div class="text-[9px] font-black text-blue-700">⏰ Чтобы успеть к ${deadlineStr}, нужна скорость ~${neededSpeed} м/мин (сейчас скорость не указана).</div>`;
+      } else if (diff > 0.5) {
+        speedAdviceHtml = `<div class="text-[9px] font-black text-amber-600">🔼 Чтобы успеть к ${deadlineStr}, нужно ускориться минимум до ${neededSpeed} м/мин (сейчас ${curSpeed}).</div>`;
+      } else if (diff < -0.5) {
+        speedAdviceHtml = `<div class="text-[9px] font-black text-blue-700">🔽 К ${deadlineStr} успеваете с запасом — можно сбавить до ${neededSpeed} м/мин (сейчас ${curSpeed}) и всё равно успеть.</div>`;
+      } else {
+        speedAdviceHtml = `<div class="text-[9px] font-black text-emerald-700">✅ Текущая скорость (${curSpeed} м/мин) как раз укладывается в срок ${deadlineStr}.</div>`;
       }
-      progressHtml = `<div class="text-[9px] text-emerald-600">Нужно по плану: ${targetRolls} рул. (${target} м) · осталось ~${remainingRolls} рул. (${remainingMeters} м)${etaHtml}</div>`;
     }
   }
+  const targetBtnHtml = hasOrderTarget ? '' : `<button onclick="setLineRunTargetRolls('${prefix}','${active.id}')" class="flex-1 bg-white text-emerald-700 py-2 rounded-xl font-black text-[9px] uppercase border border-emerald-200">🎯 ${active.manualTargetRolls ? active.manualTargetRolls + ' рул.' : 'Задать цель'}</button>`;
+  const deadlineBtnHtml = `<button onclick="setLineRunDeadline('${prefix}','${active.id}')" class="flex-1 bg-white text-emerald-700 py-2 rounded-xl font-black text-[9px] uppercase border border-emerald-200">⏰ ${active.desiredFinishTs ? 'к ' + new Date(active.desiredFinishTs).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : 'Успеть к...'}</button>`;
   el.innerHTML = `
     <div class="bg-emerald-50 border border-emerald-100 rounded-2xl p-3 space-y-1.5">
       <div class="flex items-center justify-between">
@@ -15101,10 +15273,16 @@ function renderLineRunCard(prefix, passive) {
       <div class="text-[10px] text-emerald-700 font-bold">${escapeHtmlProd(active.article)}</div>
       <div class="text-[9px] text-emerald-600">Скорость: ${active.speedMPerMin ? active.speedMPerMin + ' м/мин' : 'не указана'}${estMeters != null ? ' · сделано ориентировочно ' + estMeters + ' м (~' + estRolls + ' рул.)' : ''}</div>
       ${progressHtml}
+      ${speedAdviceHtml}
       <div class="flex gap-1.5">
         <button onclick="updateLineRunSpeed('${prefix}','${active.id}')" class="flex-1 bg-white text-emerald-700 py-2 rounded-xl font-black text-[9px] uppercase border border-emerald-200">✏️ Скорость</button>
         <button onclick="stopLineRun('${prefix}','${active.id}')" class="flex-1 bg-emerald-600 text-white py-2 rounded-xl font-black text-[9px] uppercase">✅ Артикул закончен</button>
       </div>
+      <div class="flex gap-1.5">
+        ${targetBtnHtml}
+        ${deadlineBtnHtml}
+      </div>
+      <button onclick="cancelLineRun('${prefix}','${active.id}')" class="w-full text-red-400 py-1 font-black text-[8px] uppercase">❌ Начали по ошибке — отменить без учёта</button>
     </div>`;
 }
 
