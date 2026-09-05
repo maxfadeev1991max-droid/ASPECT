@@ -890,7 +890,11 @@
         </div>
         <div class="flex items-center gap-2 shrink-0">
           <span id="header-mini-status" class="flex items-center gap-1 text-[9px] font-bold text-blue-100">
-            <span id="header-compact-user">👤 Войти</span>
+            <!-- Обычному печатнику (isPlainPrinter) вся остальная шапка скрыта
+                 (applyPlainPrinterViewLock), поэтому это единственная точка
+                 входа в «Личный кабинет» — а значит и единственный способ
+                 выйти из учётной записи. Кликабельно для всех ролей. -->
+            <span id="header-compact-user" onclick="openLoginModal()" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px;" title="Личный кабинет / выход">👤 Войти</span>
             <span id="header-compact-sync" title="Статус общей базы">🔴</span>
           </span>
           <button onclick="openPaintLineModal()" id="paint-poured-btn" class="hidden text-white text-[9px] font-black uppercase leading-none px-2 py-1.5 bg-green-600 rounded-lg shrink-0" title="Сообщить печатнику и начальнику смены, что краска налита">🎨 Налил</button>
@@ -1899,10 +1903,20 @@
         <span class="w-8 h-8 rounded-xl bg-teal-100 text-teal-700 inline-flex items-center justify-center text-base shrink-0">🧴</span>
         <div class="min-w-0">
           <div class="text-[11px] font-black uppercase text-gray-700">Статистика по заявкам краски</div>
-          <div class="text-[9px] text-gray-400 leading-relaxed">Впишите своё имя колориста — покажем время ожидания и время налива по вашим заявкам</div>
+          <!-- Текст меняется в зависимости от роли: колористу — подсказка вписать
+               своё имя, начальнику смены/директорам — поясняем, что ниже уже
+               сводка по всем колористам (см. renderPaintRequestStats). -->
+          <div id="paint-stats-desc" class="text-[9px] text-gray-400 leading-relaxed">Впишите своё имя колориста — покажем время ожидания и время налива по вашим заявкам</div>
         </div>
       </div>
-      <input type="text" id="paint-stats-name-input" placeholder="Ваше имя (колорист)" oninput="onPaintStatsNameInput()" class="w-full p-3 bg-gray-50 rounded-2xl outline-none font-bold text-sm border border-transparent focus:border-blue-300">
+      <!-- ===== Начальнику смены и директорам это поле не нужно — они видят
+           сводку сразу по ВСЕМ колористам (см. isPaintStatsLeadRole в
+           renderPaintRequestStats) — поэтому строка с именем прячется для
+           этих ролей, чтобы не создавать впечатление, будто раздел только
+           «личный» и для начальника смены статистики нет. ===== -->
+      <div id="paint-stats-name-wrap">
+        <input type="text" id="paint-stats-name-input" placeholder="Ваше имя (колорист)" oninput="onPaintStatsNameInput()" class="w-full p-3 bg-gray-50 rounded-2xl outline-none font-bold text-sm border border-transparent focus:border-blue-300">
+      </div>
       <div id="paint-stats-content"></div>
     </div>
 
@@ -5223,11 +5237,15 @@ async function checkPaintAlertOnce() {
         renderLeadFourLines(); renderColoristFourLines('dash-lead-colorist-four-lines'); renderLeadColoristStats(); renderLineRunCard('lead', true); renderShiftSpeedPlan(); renderShiftDefectLive();
         if (typeof checkShiftLeadDigest === 'function') checkShiftLeadDigest();
         const statsView = document.getElementById('view-stats');
-        if (statsView && !statsView.classList.contains('hidden')) renderLeadStatsSection();
+        if (statsView && !statsView.classList.contains('hidden')) { renderLeadStatsSection(); renderPaintRequestStats(); }
       }
       if (role === 'colorist') renderColoristFourLines();
-      if ((role === 'production_director' || role === 'shop_chief' || role === 'general_director') && document.getElementById('view-dashboard') && !document.getElementById('view-dashboard').classList.contains('hidden')) {
-        renderDirectorDashboard();
+      if (role === 'production_director' || role === 'shop_chief' || role === 'general_director') {
+        if (document.getElementById('view-dashboard') && !document.getElementById('view-dashboard').classList.contains('hidden')) {
+          renderDirectorDashboard();
+        }
+        const statsViewDir = document.getElementById('view-stats');
+        if (statsViewDir && !statsViewDir.classList.contains('hidden')) renderPaintRequestStats();
       }
     }
   } catch (e) { /* тихо игнорируем — повторим на следующем цикле опроса */ }
@@ -5713,10 +5731,27 @@ function formatDurationMs(ms) {
   const h = Math.floor(mins / 60), m = mins % 60;
   return h + ' ч ' + m + ' мин';
 }
+// Роли, которым удобнее видеть сразу сводку по ВСЕМ колористам, а не искать
+// свою личную статистику по имени (у них самих нет заявок «нужна краска»,
+// которые они бы закрывали лично).
+function isPaintStatsLeadRole(role) {
+  return role === 'shift_lead' || role === 'production_director' || role === 'shop_chief' || role === 'general_director';
+}
 function renderPaintRequestStats() {
   const el = document.getElementById('paint-stats-content');
   const input = document.getElementById('paint-stats-name-input');
+  const nameWrap = document.getElementById('paint-stats-name-wrap');
+  const desc = document.getElementById('paint-stats-desc');
   if (!el || !input) return;
+  const role = currentUserProfile && currentUserProfile.role;
+  if (isPaintStatsLeadRole(role)) {
+    if (nameWrap) nameWrap.classList.add('hidden');
+    if (desc) desc.textContent = 'Сводка сразу по всем колористам — кто сейчас наливает, сколько уже закрыл заявок и сколько в среднем занимает ожидание и налив';
+    renderLeadColoristStats('paint-stats-content', null);
+    return;
+  }
+  if (nameWrap) nameWrap.classList.remove('hidden');
+  if (desc) desc.textContent = 'Впишите своё имя колориста — покажем время ожидания и время налива по вашим заявкам';
   const savedName = loadPaintStatsName();
   if (!input.value && savedName) input.value = savedName;
   else if (!input.value && !savedName && currentUserProfile && currentUserProfile.role === 'colorist' && currentUserProfile.name) {
@@ -5765,9 +5800,13 @@ function renderPaintRequestStats() {
 // кто сейчас наливает, сколько уже закрыл заявок и не завис ли кто-то на
 // одной заявке дольше порога простоя (тот же порог, что и в очереди заявок).
 const LEAD_COLORIST_STATS_WINDOW_MS = 12 * 60 * 60 * 1000;
-function renderLeadColoristStats() {
-  const el = document.getElementById('dash-lead-colorist-stats');
-  const badge = document.getElementById('dash-lead-colorist-stats-queue-badge');
+// targetElId/badgeElId позволяют переиспользовать один и тот же расчёт для
+// двух мест: карточка «Колористы за эту смену» на Панели начальника смены
+// (dash-lead-colorist-stats) и карточка «Статистика по заявкам краски» на
+// вкладке «Статистика» (paint-stats-content) — см. renderPaintRequestStats.
+function renderLeadColoristStats(targetElId, badgeElId) {
+  const el = document.getElementById(targetElId || 'dash-lead-colorist-stats');
+  const badge = document.getElementById(badgeElId === undefined ? 'dash-lead-colorist-stats-queue-badge' : badgeElId);
   if (!el) return;
   const now = Date.now();
   const cutoff = now - LEAD_COLORIST_STATS_WINDOW_MS;
