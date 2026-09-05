@@ -1051,46 +1051,6 @@
         <h3 class="text-sm font-black text-gray-800 uppercase">🧴 Нужна краска</h3>
         <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Заявка уйдёт колористу и встанет в общую очередь. Как только цвет будет налит, вы получите обычное уведомление «Краска налита» на весь экран.</p>
 
-        <!-- ===== Калькулятор % брака по рулонам (для печатников и мастеров смен) =====
-             Перенесён сюда, во вкладку «Нужна краска» — так он под рукой у
-             печатника, который и вводит эти цифры по факту смены. Отдельный
-             от камеры ручной калькулятор: вводится сумма метража (по
-             счётчику линии) и фактическое количество сделанных рулонов — по
-             ним считается, сколько рулонов должно было получиться по
-             метражу, % брака и рулоны брака. Формулы — ровно те, что
-             фактически использует цех:
-             • рулон 10,05 м:  рулонов_по_метражу = метраж / 10,05;
-                                % брака = (рулонов_по_метражу / кол-во_рулонов) × 100;
-             • рулон 25 м:      кол-во_рулонов_в_базе = кол-во_рулонов × 25 / 10,05;
-                                % брака = (рулонов_по_метражу / кол-во_рулонов_в_базе) × 100;
-             • рулонов брака (в обоих случаях) = рулонов_по_метражу − кол-во_рулонов(_в_базе). -->
-        <div class="bg-white rounded-2xl border border-gray-100 p-4 space-y-3">
-          <h3 class="text-sm font-black text-gray-800 uppercase">🧮 Калькулятор % брака (по рулонам)</h3>
-          <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Для печатников и мастеров смены: введите сумму метража (по счётчику линии) и фактическое количество сделанных рулонов — приложение само посчитает % брака и рулоны брака. База — рулон 10,05 м.</p>
-          <div class="grid grid-cols-2 gap-2">
-            <button id="defectcalc-type-1005-btn" onclick="setDefectCalcRollType('1005')" class="py-2.5 rounded-xl text-[10px] font-black uppercase mode-btn-active">Рулон 10,05 м</button>
-            <button id="defectcalc-type-25-btn" onclick="setDefectCalcRollType('25')" class="py-2.5 rounded-xl text-[10px] font-black uppercase mode-btn-inactive">Рулон 25 м</button>
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <div>
-              <label class="text-[9px] font-black uppercase text-gray-400 block mb-1">Сумма метража, м</label>
-              <input type="number" id="defectcalc-meters" step="0.01" min="0" inputmode="decimal" placeholder="Напр. 950" oninput="calcRollDefect()" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[13px] font-bold">
-            </div>
-            <div>
-              <label id="defectcalc-rolls-label" class="text-[9px] font-black uppercase text-gray-400 block mb-1">Кол-во рулонов (10,05 м), шт</label>
-              <input type="number" id="defectcalc-rolls" step="1" min="0" inputmode="decimal" placeholder="Напр. 90" oninput="calcRollDefect()" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[13px] font-bold">
-            </div>
-          </div>
-          <div id="defectcalc-result" class="hidden space-y-2 pt-1">
-            <div class="grid grid-cols-3 gap-2 text-center">
-              <div class="bg-gray-50 rounded-xl p-2"><div class="text-[8px] text-gray-400 uppercase leading-tight">Рулонов<br>по метражу</div><div id="defectcalc-goodrolls" class="text-sm font-black text-gray-800 mt-0.5">—</div></div>
-              <div class="bg-red-50 rounded-xl p-2"><div class="text-[8px] text-red-400 uppercase leading-tight">% брака</div><div id="defectcalc-percent" class="text-base font-black text-red-600 mt-0.5">—</div></div>
-              <div class="bg-red-50 rounded-xl p-2"><div class="text-[8px] text-red-400 uppercase leading-tight">Рулонов<br>брака</div><div id="defectcalc-defrolls" class="text-sm font-black text-red-600 mt-0.5">—</div></div>
-            </div>
-            <p id="defectcalc-detail" class="text-[8px] text-gray-400 leading-relaxed"></p>
-          </div>
-        </div>
-
         <input type="text" id="paint-request-article" placeholder="Артикул / название цвета" class="w-full p-3 bg-gray-50 rounded-2xl outline-none font-bold text-sm border border-transparent focus:border-blue-300">
         <div class="flex gap-2">
           <input type="text" id="paint-request-qty" placeholder="Кол-во (напр. 5 кг)" class="w-28 shrink-0 p-2.5 bg-gray-50 rounded-2xl outline-none font-bold text-[11px] border border-transparent focus:border-blue-300">
@@ -1111,6 +1071,46 @@
         </div>
         <button id="paint-request-submit-btn" onclick="submitPaintRequest()" class="w-full bg-blue-600 text-white py-3 rounded-2xl btn-active text-[11px] font-black uppercase">📨 Отправить заявку</button>
         <div id="paint-request-mine-list" class="space-y-1.5 pt-1 max-h-56 overflow-y-auto pr-1"></div>
+
+        <!-- ===== Калькулятор % брака по рулонам — отдельный вспомогательный
+             инструмент, никак не связанный с заказом краски выше. Раньше стоял
+             ПЕРЕД полями заявки и визуально сливался с ней — печатники путали,
+             что из этого нужно заполнять, чтобы заказать краску. Теперь: (1) стоит
+             ПОСЛЕ формы заявки, (2) свёрнут по умолчанию и открывается по клику,
+             (3) на отдельной серой плашке с чёткой подписью "доп. инструмент", —
+             так форма заявки на краску остаётся первой и единственной, что видит
+             печатник по умолчанию. -->
+        <div class="pt-2 mt-2 border-t border-dashed border-gray-200">
+          <button type="button" onclick="togglePaintDefectCalc()" class="w-full flex items-center justify-between gap-2 bg-gray-50 rounded-2xl p-3">
+            <span class="text-[10px] font-black text-gray-500 uppercase flex items-center gap-1.5">🧮 Калькулятор % брака <span class="font-normal normal-case text-gray-400">· доп. инструмент, к заказу краски не относится</span></span>
+            <span id="paint-defectcalc-chevron" class="text-gray-400 shrink-0">▾</span>
+          </button>
+          <div id="paint-defectcalc-box" class="hidden bg-white rounded-2xl border border-gray-100 p-4 space-y-3 mt-2">
+            <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">Для печатников и мастеров смены: введите сумму метража (по счётчику линии) и фактическое количество сделанных рулонов — приложение само посчитает % брака и рулоны брака. База — рулон 10,05 м.</p>
+            <div class="grid grid-cols-2 gap-2">
+              <button id="defectcalc-type-1005-btn" onclick="setDefectCalcRollType('1005')" class="py-2.5 rounded-xl text-[10px] font-black uppercase mode-btn-active">Рулон 10,05 м</button>
+              <button id="defectcalc-type-25-btn" onclick="setDefectCalcRollType('25')" class="py-2.5 rounded-xl text-[10px] font-black uppercase mode-btn-inactive">Рулон 25 м</button>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-[9px] font-black uppercase text-gray-400 block mb-1">Сумма метража, м</label>
+                <input type="number" id="defectcalc-meters" step="0.01" min="0" inputmode="decimal" placeholder="Напр. 950" oninput="calcRollDefect()" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[13px] font-bold">
+              </div>
+              <div>
+                <label id="defectcalc-rolls-label" class="text-[9px] font-black uppercase text-gray-400 block mb-1">Кол-во рулонов (10,05 м), шт</label>
+                <input type="number" id="defectcalc-rolls" step="1" min="0" inputmode="decimal" placeholder="Напр. 90" oninput="calcRollDefect()" class="w-full p-2.5 bg-gray-50 rounded-xl outline-none text-[13px] font-bold">
+              </div>
+            </div>
+            <div id="defectcalc-result" class="hidden space-y-2 pt-1">
+              <div class="grid grid-cols-3 gap-2 text-center">
+                <div class="bg-gray-50 rounded-xl p-2"><div class="text-[8px] text-gray-400 uppercase leading-tight">Рулонов<br>по метражу</div><div id="defectcalc-goodrolls" class="text-sm font-black text-gray-800 mt-0.5">—</div></div>
+                <div class="bg-red-50 rounded-xl p-2"><div class="text-[8px] text-red-400 uppercase leading-tight">% брака</div><div id="defectcalc-percent" class="text-base font-black text-red-600 mt-0.5">—</div></div>
+                <div class="bg-red-50 rounded-xl p-2"><div class="text-[8px] text-red-400 uppercase leading-tight">Рулонов<br>брака</div><div id="defectcalc-defrolls" class="text-sm font-black text-red-600 mt-0.5">—</div></div>
+              </div>
+              <p id="defectcalc-detail" class="text-[8px] text-gray-400 leading-relaxed"></p>
+            </div>
+          </div>
+        </div>
       </div>
       <div id="paint-request-queue" class="hidden space-y-2">
         <div class="flex items-center justify-between gap-2">
@@ -2474,13 +2474,52 @@
   <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-3">
     <div class="flex items-center justify-between gap-2">
       <div class="text-[10px] font-black uppercase text-gray-500">🏆 Личный зачёт печатников</div>
-      <div class="flex bg-gray-100 rounded-full p-0.5 text-[9px] font-black">
-        <button id="dash-personal-race-tab-shift" onclick="setPersonalRaceScope('shift')" class="px-2.5 py-1 rounded-full">Смена</button>
-        <button id="dash-personal-race-tab-week" onclick="setPersonalRaceScope('week')" class="px-2.5 py-1 rounded-full">Неделя</button>
+      <div class="flex items-center gap-1.5 shrink-0">
+        <button onclick="showMyShiftSummaryNow()" title="Итог моей смены" class="text-[13px] leading-none px-1.5 py-1 rounded-lg bg-gray-100">🏁</button>
+        <button onclick="openShopBoard()" title="Открыть табло для цеха" class="text-[13px] leading-none px-1.5 py-1 rounded-lg bg-gray-100">🖥</button>
+        <div class="flex bg-gray-100 rounded-full p-0.5 text-[9px] font-black">
+          <button id="dash-personal-race-tab-shift" onclick="setPersonalRaceScope('shift')" class="px-2.5 py-1 rounded-full">Смена</button>
+          <button id="dash-personal-race-tab-week" onclick="setPersonalRaceScope('week')" class="px-2.5 py-1 rounded-full">Неделя</button>
+        </div>
       </div>
     </div>
     <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">В зачёте — «чистые» рулоны: выкатка минус доля брака линии. Гонка не за скорость любой ценой, а за скорость без брака.</p>
     <div id="dash-personal-race-list" class="space-y-2"></div>
+  </div>
+
+  <!-- Уровни/звания печатника — Бронза → Серебро → Золото → Мастер, по
+       накопленным «чистым» рулонам за месяц (обнуляется — статус нужно
+       подтверждать) или за всё время (глубина истории ограничена). -->
+  <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-3">
+    <div class="flex items-center justify-between gap-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">🎖 Уровни печатников</div>
+      <div class="flex bg-gray-100 rounded-full p-0.5 text-[9px] font-black">
+        <button id="dash-printer-ranks-tab-month" onclick="setPrinterRanksScope('month')" class="px-2.5 py-1 rounded-full">За месяц</button>
+        <button id="dash-printer-ranks-tab-alltime" onclick="setPrinterRanksScope('alltime')" class="px-2.5 py-1 rounded-full">За всё время</button>
+      </div>
+    </div>
+    <p class="text-[9px] text-gray-400 leading-relaxed -mt-1">🥉 Бронза → 🥈 Серебро → 🥇 Золото → 👑 Мастер. За месяц статус нужно подтверждать заново каждый месяц.</p>
+    <div id="dash-printer-ranks-list" class="space-y-2"></div>
+  </div>
+
+  <!-- Смена на смену: день vs ночь — командное соперничество по сумме
+       «чистых» рулонов, а не только личное. -->
+  <div class="bg-white border border-gray-100 rounded-2xl p-4 space-y-3">
+    <div class="flex items-center justify-between gap-2">
+      <div class="text-[10px] font-black uppercase text-gray-500">⚔️ Смена на смену</div>
+      <div class="flex bg-gray-100 rounded-full p-0.5 text-[9px] font-black">
+        <button id="dash-shift-team-tab-day" onclick="setShiftTeamRaceScope('day')" class="px-2.5 py-1 rounded-full">Сутки</button>
+        <button id="dash-shift-team-tab-week" onclick="setShiftTeamRaceScope('week')" class="px-2.5 py-1 rounded-full">Неделя</button>
+      </div>
+    </div>
+    <div id="dash-shift-team-race" class="space-y-2"></div>
+  </div>
+
+  <!-- Печатник месяца — отдельная доска почёта, как «Неделя», но за
+       календарный месяц: более весомое признание. -->
+  <div class="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-4 space-y-2 text-white shadow-lg">
+    <div id="dash-printer-of-month-title" class="text-[10px] font-black uppercase text-white/70">👑 Печатник месяца</div>
+    <div id="dash-printer-of-month"></div>
   </div>
 
   <!-- Печатник / ст.печатник -->
@@ -3084,6 +3123,17 @@
     </div>
 </div>
 
+<!-- Итог смены — карточка на прощание: показывается автоматически один раз
+     при смене календарной смены (для залогиненного печатника) и вручную по
+     кнопке 🏁 в «Личном зачёте». -->
+<div id="shift-end-summary-modal" class="hidden fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-6" onclick="if(event.target===this) closeShiftEndSummaryModal()">
+  <div class="bg-slate-900 text-white p-6 rounded-[2rem] space-y-3 max-w-sm w-full text-center" onclick="event.stopPropagation()">
+    <h3 id="shift-end-summary-title" class="font-black uppercase text-blue-300">🏁 Итог смены</h3>
+    <div id="shift-end-summary-body" class="space-y-1 py-2"></div>
+    <button onclick="closeShiftEndSummaryModal()" class="w-full py-3 bg-blue-600 rounded-2xl font-black uppercase text-xs">Понятно, приду за реваншем 💪</button>
+  </div>
+</div>
+
 <!-- Чат: сообщения хранятся в той же общей базе (☁️), что и рецепты —
      поэтому виден коллеге почти сразу (обновляется каждые ~6 сек, пока
      окно чата открыто, и раз в 30 сек фоном для счётчика непрочитанных). -->
@@ -3128,6 +3178,26 @@
   <div class="text-3xl font-black uppercase text-white leading-tight mb-5">налита, можно забирать</div>
   <div id="test-paint-poured-alert-meta" class="text-sm text-white/90 font-bold"></div>
   <div class="mt-8 text-[11px] text-white/70 uppercase font-black">Нажмите, чтобы скрыть</div>
+</div>
+
+<!-- Табло для цеха — полноэкранный режим без лишних кнопок: только гонка
+     смены и личный зачёт, крупным шрифтом, чтобы выводить на монитор в
+     цехе. Обновляется раз в 5 сек, пока открыт. -->
+<div id="shop-board-view" class="hidden fixed inset-0 z-[999] bg-slate-950 p-6 sm:p-10 overflow-y-auto" onclick="if(event.target===this) closeShopBoard()">
+  <div class="max-w-3xl mx-auto space-y-6">
+    <div class="flex items-center justify-between">
+      <div class="text-2xl sm:text-3xl font-black uppercase text-white tracking-wide">🏭 Табло цеха</div>
+      <div class="flex items-center gap-3">
+        <span id="shop-board-time" class="text-xl font-black text-white/60"></span>
+        <button onclick="closeShopBoard()" class="text-white/60 text-2xl leading-none px-2">✕</button>
+      </div>
+    </div>
+    <div id="shop-board-team" class="bg-white/5 rounded-2xl p-5"></div>
+    <div>
+      <div class="text-sm font-black uppercase text-white/50 mb-3">🏆 Личный зачёт за смену</div>
+      <div id="shop-board-personal-list" class="space-y-3"></div>
+    </div>
+  </div>
 </div>
 <div id="chat-modal" class="hidden fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center" onclick="if(event.target===this) closeChatModal()">
   <div class="bg-white w-full sm:max-w-sm sm:rounded-[2rem] rounded-t-[2rem] flex flex-col overflow-hidden" style="height:82vh; max-height:640px;" onclick="event.stopPropagation()">
@@ -3341,6 +3411,17 @@ let defectCalcRollType = '1005'; // выбранный тип рулона в к
 // Базовая длина рулона на линии — 10,05 м. Все расчёты приводятся к ней.
 const DEFECTCALC_BASE_ROLL_M = 10.05;
 
+// Свернуть/развернуть калькулятор % брака во вкладке «Нужна краска» — по
+// умолчанию свёрнут, чтобы не мешать заявке на краску (см. пояснение в HTML
+// рядом с paint-defectcalc-box).
+function togglePaintDefectCalc() {
+  const box = document.getElementById('paint-defectcalc-box');
+  const chevron = document.getElementById('paint-defectcalc-chevron');
+  if (!box) return;
+  const willShow = box.classList.contains('hidden');
+  box.classList.toggle('hidden', !willShow);
+  if (chevron) chevron.textContent = willShow ? '▴' : '▾';
+}
 function setDefectCalcRollType(type){
   defectCalcRollType = (type === '25') ? '25' : '1005';
   const btn1005 = document.getElementById('defectcalc-type-1005-btn');
@@ -3383,14 +3464,14 @@ function calcRollDefect(){
     detailLines.push(`Рулоны 25 м в базе 10,05 м: ${rollsRaw} × 25 / 10,05 = ${rollsInBase.toFixed(2)}`);
   }
 
-  const percent = (goodRollsByMeters / rollsInBase) * 100;
+  const percent = goodRollsByMeters > 0 ? Math.max(0, ((goodRollsByMeters - rollsInBase) / goodRollsByMeters) * 100) : 0;
   const defectRollsRaw = goodRollsByMeters - rollsInBase;
-  const defectRolls = defectRollsRaw > 0 ? defectRollsRaw : 0;
+  const defectRolls = defectRollsRaw > 0 ? Math.round(defectRollsRaw) : 0;
 
   resultBox.classList.remove('hidden');
   document.getElementById('defectcalc-goodrolls').textContent = goodRollsByMeters.toFixed(2);
   document.getElementById('defectcalc-percent').textContent = percent.toFixed(1) + '%';
-  document.getElementById('defectcalc-defrolls').textContent = defectRolls.toFixed(2);
+  document.getElementById('defectcalc-defrolls').textContent = defectRolls;
 
   if (defectRollsRaw < 0) {
     detailLines.push('Готовых рулонов больше, чем даёт метраж — проверьте введённые цифры.');
@@ -4971,6 +5052,11 @@ async function checkPaintAlertOnce() {
       if (typeof renderAllLinesStatus === 'function') renderAllLinesStatus();
       if (typeof renderShiftRace === 'function') renderShiftRace();
       if (typeof renderPersonalRace === 'function') renderPersonalRace();
+      if (typeof renderPrinterRanks === 'function') renderPrinterRanks();
+      if (typeof renderShiftTeamRace === 'function') renderShiftTeamRace();
+      if (typeof renderPrinterOfMonth === 'function') renderPrinterOfMonth();
+      if (typeof checkShiftEndSummary === 'function') checkShiftEndSummary();
+      if (typeof renderShopBoard === 'function') renderShopBoard();
       const role = currentUserProfile && currentUserProfile.role;
       if (role === 'upp_master') renderOrdersList();
       if (role === 'senior_printer') renderLineRunCard('printer', true);
@@ -12939,6 +13025,10 @@ function renderDashboardView() {
   if (typeof renderAllLinesStatus === 'function') renderAllLinesStatus();
   if (typeof renderShiftRace === 'function') renderShiftRace();
   if (typeof renderPersonalRace === 'function') renderPersonalRace();
+  if (typeof renderPrinterRanks === 'function') renderPrinterRanks();
+  if (typeof renderShiftTeamRace === 'function') renderShiftTeamRace();
+  if (typeof renderPrinterOfMonth === 'function') renderPrinterOfMonth();
+  if (typeof checkShiftEndSummary === 'function') checkShiftEndSummary();
   const role = currentUserProfile && currentUserProfile.role;
   if (!role) { if (noRole) noRole.classList.remove('hidden'); return; }
   if (noRole) noRole.classList.add('hidden');
@@ -14044,6 +14134,73 @@ function buildOperatorShiftBreakdown(lookbackMs) {
   });
   return map;
 }
+// ===== Смена на смену: день vs ночь =====
+// Та же разбивка (buildOperatorShiftBreakdown), но операторов внутри каждой
+// календарной смены группируем не по имени, а по типу смены (день/ночь) —
+// определяем по часу начала смены (8:00 = дневная, 20:00 = ночная, см.
+// getCurrentShiftWindow). Считаем «чистые» рулоны, как и везде — иначе
+// соревнование поощряло бы скорость в ущерб качеству.
+function getShiftTeamTotals(scope) {
+  const breakdown = buildOperatorShiftBreakdown(PERSONAL_STATS_LOOKBACK_MS);
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const cutoff = scope === 'day' ? todayStart.getTime() : Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const totals = { day: { raw: 0, net: 0 }, night: { raw: 0, net: 0 } };
+  Object.keys(breakdown).forEach(keyStr => {
+    const key = Number(keyStr);
+    if (key < cutoff) return;
+    const isDayShift = new Date(key).getHours() === 8;
+    const bucket = isDayShift ? totals.day : totals.night;
+    const operators = breakdown[key];
+    Object.keys(operators).forEach(op => {
+      const { raw, net } = operatorNetMetersForShift(operators[op], key);
+      bucket.raw += raw;
+      bucket.net += net;
+    });
+  });
+  return totals;
+}
+let shiftTeamRaceScope = (function () { try { return localStorage.getItem('dash_shift_team_scope') || 'day'; } catch (e) { return 'day'; } })();
+function setShiftTeamRaceScope(scope) {
+  shiftTeamRaceScope = scope;
+  try { localStorage.setItem('dash_shift_team_scope', scope); } catch (e) {}
+  renderShiftTeamRace();
+}
+function renderShiftTeamRace() {
+  const wrap = document.getElementById('dash-shift-team-race');
+  if (!wrap) return;
+  ['day', 'week'].forEach(s => {
+    const btn = document.getElementById('dash-shift-team-tab-' + s);
+    if (btn) btn.className = 'px-2.5 py-1 rounded-full transition-colors ' + (shiftTeamRaceScope === s ? 'bg-white shadow text-gray-900' : 'text-gray-400');
+  });
+  const totals = getShiftTeamTotals(shiftTeamRaceScope);
+  const dayRolls = totals.day.net / METERS_PER_ROLL, nightRolls = totals.night.net / METERS_PER_ROLL;
+  if (dayRolls <= 0 && nightRolls <= 0) {
+    wrap.innerHTML = `<div class="text-[10px] text-gray-400 text-center py-1.5">${shiftTeamRaceScope === 'day' ? 'Сегодня ещё никто ничего не выкатал.' : 'За последние 7 дней пока нет данных.'}</div>`;
+    return;
+  }
+  const leader = Math.max(dayRolls, nightRolls, 1);
+  const rows = [
+    { key: 'day', label: '☀️ Дневная смена', rolls: dayRolls, raw: totals.day.raw / METERS_PER_ROLL, color: 'bg-amber-400' },
+    { key: 'night', label: '🌙 Ночная смена', rolls: nightRolls, raw: totals.night.raw / METERS_PER_ROLL, color: 'bg-indigo-400' }
+  ];
+  const winnerKey = dayRolls === nightRolls ? null : (dayRolls > nightRolls ? 'day' : 'night');
+  wrap.innerHTML = rows.map(row => {
+    const pct = Math.max(4, Math.round((row.rolls / leader) * 100));
+    const defectPct = row.raw > 0 ? Math.round((1 - row.rolls / row.raw) * 1000) / 10 : 0;
+    const defectBadge = defectPct > 0.05 ? `<span class="text-[8px] text-amber-600 font-bold">брак ~${defectPct}%</span>` : '';
+    const crownBadge = winnerKey === row.key ? `<span class="text-[8px] bg-emerald-100 text-emerald-700 font-black px-1.5 py-0.5 rounded-full">🏆 наша смена круче</span>` : '';
+    return `<div class="bg-gray-50 rounded-xl p-2.5 space-y-1">
+      <div class="flex items-center justify-between gap-2">
+        <div class="text-[11px] font-black text-gray-800">${row.label}</div>
+        <div class="text-[12px] font-black text-gray-900 shrink-0">${Math.round(row.rolls)} рул.</div>
+      </div>
+      <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
+        <div class="${row.color} h-full rounded-full transition-all" style="width:${pct}%"></div>
+      </div>
+      <div class="flex items-center gap-1.5 flex-wrap">${defectBadge}${crownBadge}</div>
+    </div>`;
+  }).join('');
+}
 // "Чистые" метры оператора за ОДНУ конкретную смену: его метры на каждой
 // линии умножаются на (1 − доля брака этой линии в этой смене) — тот же
 // брак, что введён начальником смены в «🚨 Брак за смену» и сохранён в
@@ -14067,7 +14224,14 @@ function getOperatorTotalsForScope(scope) {
   const breakdown = buildOperatorShiftBreakdown(PERSONAL_STATS_LOOKBACK_MS);
   const curKey = getCurrentShiftWindow().start.getTime();
   const weekCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const keys = Object.keys(breakdown).map(Number).filter(key => scope === 'shift' ? key === curKey : key >= weekCutoff);
+  const monthStart = new Date(); monthStart.setHours(0, 0, 0, 0); monthStart.setDate(1);
+  const monthCutoff = monthStart.getTime();
+  const keys = Object.keys(breakdown).map(Number).filter(key => {
+    if (scope === 'shift') return key === curKey;
+    if (scope === 'month') return key >= monthCutoff;
+    if (scope === 'alltime') return true;
+    return key >= weekCutoff; // 'week' (по умолчанию)
+  });
   const totals = {};
   keys.forEach(key => {
     const operators = breakdown[key];
@@ -14096,6 +14260,93 @@ function getOperatorBestShiftNetRolls(operatorName, excludeShiftKey) {
   });
   return best;
 }
+// ===== Стрик за стабильность: N смен подряд без брака выше порога =====
+// Считаем подряд идущие смены (в хронологическом порядке), в которых
+// печатник реально что-то выкатал (raw > 0) и брак этой смены не превысил
+// STREAK_DEFECT_THRESHOLD_PCT. Как только встречается смена хуже порога —
+// стрик обрывается. Пропущенные (не отработанные) смены в подсчёт не идут
+// и не обнуляют стрик — считаем только те смены, где человек реально стоял
+// у линии.
+const STREAK_DEFECT_THRESHOLD_PCT = 2;
+const STREAK_MIN_TO_SHOW = 3;
+function getOperatorStreak(operatorName) {
+  const breakdown = buildOperatorShiftBreakdown(PERSONAL_STATS_LOOKBACK_MS);
+  const curKey = getCurrentShiftWindow().start.getTime();
+  const keys = Object.keys(breakdown).map(Number)
+    .filter(key => key !== curKey && breakdown[key][operatorName])
+    .sort((a, b) => b - a); // от последней прошедшей смены назад
+  let streak = 0;
+  for (let i = 0; i < keys.length; i++) {
+    const perLine = breakdown[keys[i]][operatorName];
+    const { raw, net } = operatorNetMetersForShift(perLine, keys[i]);
+    if (raw <= 0) continue;
+    const defectPct = (1 - net / raw) * 100;
+    if (defectPct <= STREAK_DEFECT_THRESHOLD_PCT) streak++; else break;
+  }
+  return streak;
+}
+// ===== Уровни/звания печатника: Бронза → Серебро → Золото → Мастер =====
+// Пороги (в «чистых» рулонах) — оценка, легко подправить под реальные цифры
+// цеха. Для «за месяц» пороги ниже (месяц каждый раз обнуляется, статус
+// нужно подтверждать заново — это и создаёт азарт «не хочу его терять»),
+// для «за всё время» — выше (глубина истории ограничена PERSONAL_STATS_LOOKBACK_MS).
+const PRINTER_RANK_THRESHOLDS = {
+  month: [
+    { key: 'bronze', label: 'Бронза', emoji: '🥉', min: 0 },
+    { key: 'silver', label: 'Серебро', emoji: '🥈', min: 800 },
+    { key: 'gold', label: 'Золото', emoji: '🥇', min: 2000 },
+    { key: 'master', label: 'Мастер', emoji: '👑', min: 4000 }
+  ],
+  alltime: [
+    { key: 'bronze', label: 'Бронза', emoji: '🥉', min: 0 },
+    { key: 'silver', label: 'Серебро', emoji: '🥈', min: 5000 },
+    { key: 'gold', label: 'Золото', emoji: '🥇', min: 15000 },
+    { key: 'master', label: 'Мастер', emoji: '👑', min: 30000 }
+  ]
+};
+function getPrinterRank(netRolls, scope) {
+  const levels = PRINTER_RANK_THRESHOLDS[scope] || PRINTER_RANK_THRESHOLDS.alltime;
+  let current = levels[0], next = null;
+  for (let i = 0; i < levels.length; i++) {
+    if (netRolls >= levels[i].min) current = levels[i];
+    if (netRolls < levels[i].min) { next = levels[i]; break; }
+  }
+  return { ...current, next, toNext: next ? Math.max(0, Math.round(next.min - netRolls)) : 0 };
+}
+let printerRanksScope = (function () { try { return localStorage.getItem('dash_printer_ranks_scope') || 'month'; } catch (e) { return 'month'; } })();
+function setPrinterRanksScope(scope) {
+  printerRanksScope = scope;
+  try { localStorage.setItem('dash_printer_ranks_scope', scope); } catch (e) {}
+  renderPrinterRanks();
+}
+function renderPrinterRanks() {
+  const wrap = document.getElementById('dash-printer-ranks-list');
+  if (!wrap) return;
+  ['month', 'alltime'].forEach(s => {
+    const btn = document.getElementById('dash-printer-ranks-tab-' + s);
+    if (btn) btn.className = 'px-2.5 py-1 rounded-full transition-colors ' + (printerRanksScope === s ? 'bg-white shadow text-gray-900' : 'text-gray-400');
+  });
+  const totals = getOperatorTotalsForScope(printerRanksScope);
+  const names = Object.keys(totals);
+  if (!names.length) {
+    wrap.innerHTML = `<div class="text-[10px] text-gray-400 text-center py-1.5">Пока нет данных, чтобы посчитать уровни.</div>`;
+    return;
+  }
+  const ranked = names.map(name => ({ name, netRolls: totals[name].net / METERS_PER_ROLL }))
+    .sort((a, b) => b.netRolls - a.netRolls);
+  wrap.innerHTML = ranked.map(p => {
+    const rank = getPrinterRank(p.netRolls, printerRanksScope);
+    const nextLabel = rank.next ? `до «${rank.next.label}» ещё ${rank.toNext} рул.` : 'максимальный уровень';
+    return `<div class="bg-gray-50 rounded-xl p-2.5 flex items-center justify-between gap-2">
+      <div class="min-w-0">
+        <div class="text-[11px] font-black text-gray-800 flex items-center gap-1.5 min-w-0">
+          <span class="shrink-0 text-base">${rank.emoji}</span><span class="truncate">${escapeHtmlProd(p.name)}</span>
+        </div>
+        <div class="text-[9px] text-gray-400">${escapeHtmlProd(rank.label)} · ${Math.round(p.netRolls)} рул. · ${nextLabel}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
 let personalRaceScope = (function () { try { return localStorage.getItem('dash_personal_race_scope') || 'shift'; } catch (e) { return 'shift'; } })();
 function setPersonalRaceScope(scope) {
   personalRaceScope = scope;
@@ -14122,6 +14373,7 @@ function renderPersonalRace() {
   const leaderNet = ranked[0].netRolls || 1;
   const medals = ['🥇', '🥈', '🥉'];
   const curKey = getCurrentShiftWindow().start.getTime();
+  const alltimeTotals = getOperatorTotalsForScope('alltime');
   wrap.innerHTML = ranked.map((p, idx) => {
     const pct = Math.max(4, Math.round((p.netRolls / leaderNet) * 100));
     const defectPct = p.rawRolls > 0 ? Math.round((1 - p.netRolls / p.rawRolls) * 1000) / 10 : 0;
@@ -14133,19 +14385,184 @@ function renderPersonalRace() {
       const milestone = celebrateMilestoneOnce('operator_' + encodeURIComponent(p.name) + '_' + curKey, SHIFT_MILESTONES, p.rawRolls, t => `🎉 ${p.name}: ${t}+ рулонов за смену!`);
       if (milestone) milestoneBadge = `<span class="text-[8px] bg-blue-100 text-blue-700 font-black px-1.5 py-0.5 rounded-full">🔥 ${milestone}+</span>`;
     }
+    const streak = getOperatorStreak(p.name);
+    const streakBadge = streak >= STREAK_MIN_TO_SHOW
+      ? `<span class="text-[8px] bg-orange-100 text-orange-700 font-black px-1.5 py-0.5 rounded-full">🎯 Стрик ${streak} см. без брака>${STREAK_DEFECT_THRESHOLD_PCT}%</span>` : '';
+    const rank = getPrinterRank(alltimeTotals[p.name] ? alltimeTotals[p.name].net / METERS_PER_ROLL : p.netRolls, 'alltime');
     return `<div class="bg-gray-50 rounded-xl p-2.5 space-y-1">
       <div class="flex items-center justify-between gap-2">
         <div class="text-[11px] font-black text-gray-800 flex items-center gap-1.5 min-w-0">
           <span class="shrink-0">${medals[idx] || (idx + 1) + '.'}</span><span class="truncate">${escapeHtmlProd(p.name)}</span>
+          <span class="shrink-0" title="${escapeHtmlProd(rank.label)}">${rank.emoji}</span>
         </div>
         <div class="text-[12px] font-black text-gray-900 shrink-0">${Math.round(p.netRolls)} рул.</div>
       </div>
       <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
         <div class="bg-blue-500 h-full rounded-full transition-all" style="width:${pct}%"></div>
       </div>
-      <div class="flex items-center gap-1.5 flex-wrap">${defectBadge}${recordBadge}${milestoneBadge}</div>
+      <div class="flex items-center gap-1.5 flex-wrap">${defectBadge}${recordBadge}${milestoneBadge}${streakBadge}</div>
     </div>`;
   }).join('');
+}
+// ===== Итог смены — карточка на прощание =====
+// Место в личном зачёте, рулоны, брак и разрыв до места выше — за конкретную
+// (обычно только что закончившуюся) смену. Данные — из той же разбивки, что
+// и у «Личного зачёта», просто зафиксированной на момент конкретной смены.
+function getOperatorShiftSummary(operatorName, shiftKey) {
+  const breakdown = buildOperatorShiftBreakdown(PERSONAL_STATS_LOOKBACK_MS);
+  const operators = breakdown[shiftKey] || {};
+  const ranked = Object.keys(operators).map(name => {
+    const { raw, net } = operatorNetMetersForShift(operators[name], shiftKey);
+    return { name, raw: raw / METERS_PER_ROLL, net: net / METERS_PER_ROLL };
+  }).sort((a, b) => b.net - a.net);
+  const idx = ranked.findIndex(r => r.name === operatorName);
+  if (idx === -1) return null;
+  const me = ranked[idx];
+  const defectPct = me.raw > 0 ? Math.round((1 - me.net / me.raw) * 1000) / 10 : 0;
+  const ahead = idx > 0 ? ranked[idx - 1] : null;
+  return {
+    place: idx + 1, total: ranked.length, netRolls: me.net, defectPct,
+    gapToAhead: ahead ? Math.round(ahead.net - me.net) : 0, aheadName: ahead ? ahead.name : null
+  };
+}
+function showShiftEndSummaryModal(summary, isLive) {
+  const modal = document.getElementById('shift-end-summary-modal');
+  if (!modal) return;
+  const titleEl = document.getElementById('shift-end-summary-title');
+  const bodyEl = document.getElementById('shift-end-summary-body');
+  if (titleEl) titleEl.textContent = isLive ? '📊 Моя смена сейчас' : '🏁 Итог смены';
+  const medals = { 1: '🥇', 2: '🥈', 3: '🥉' };
+  const placeLabel = (medals[summary.place] || '🎽') + ' ' + summary.place + '-е место из ' + summary.total;
+  let gapLine = '';
+  if (summary.place === 1) gapLine = '🔥 Ты лидер смены!';
+  else if (summary.gapToAhead > 0) gapLine = `До места выше (${escapeHtmlProd(summary.aheadName)}) не хватило ${summary.gapToAhead} рул.`;
+  if (bodyEl) bodyEl.innerHTML = `
+    <div class="text-4xl font-black text-center text-white">${Math.round(summary.netRolls)} рул.</div>
+    <div class="text-center text-sm font-black text-blue-300">${placeLabel}</div>
+    <div class="text-center text-xs text-gray-400">Брак: ${summary.defectPct}%</div>
+    ${gapLine ? `<div class="text-center text-xs text-amber-300 font-bold pt-1">${gapLine}</div>` : ''}
+  `;
+  modal.classList.remove('hidden');
+}
+function closeShiftEndSummaryModal() { const m = document.getElementById('shift-end-summary-modal'); if (m) m.classList.add('hidden'); }
+// Автопоказ: при смене номера текущей календарной смены (для залогиненного
+// пользователя) один раз показываем итог только что закончившейся смены —
+// естественная точка «захотелось отыграться завтра». Дедуплицируется через
+// localStorage per-пользователь, поэтому даже если несколько устройств
+// работает под одним именем — на каждом покажется свой раз.
+function checkShiftEndSummary() {
+  const profile = typeof currentUserProfile !== 'undefined' ? currentUserProfile : null;
+  if (!profile || !profile.name) return;
+  const curKey = getCurrentShiftWindow().start.getTime();
+  const seenKey = 'dash_shiftend_seen_' + encodeURIComponent(profile.name);
+  let lastSeen = null;
+  try { lastSeen = localStorage.getItem(seenKey); } catch (e) {}
+  if (lastSeen === null) { try { localStorage.setItem(seenKey, String(curKey)); } catch (e) {} return; }
+  const lastSeenNum = Number(lastSeen);
+  if (lastSeenNum !== curKey) {
+    try { localStorage.setItem(seenKey, String(curKey)); } catch (e) {}
+    const summary = getOperatorShiftSummary(profile.name, lastSeenNum);
+    if (summary) showShiftEndSummaryModal(summary, false);
+  }
+}
+function showMyShiftSummaryNow() {
+  const profile = typeof currentUserProfile !== 'undefined' ? currentUserProfile : null;
+  if (!profile || !profile.name) { if (typeof toast === 'function') toast('Сначала войдите в личный кабинет 👤'); return; }
+  const curKey = getCurrentShiftWindow().start.getTime();
+  const summary = getOperatorShiftSummary(profile.name, curKey);
+  if (!summary) { if (typeof toast === 'function') toast('Пока нет рулонов за эту смену'); return; }
+  showShiftEndSummaryModal(summary, true);
+}
+// ===== Печатник месяца — отдельная доска почёта =====
+function renderPrinterOfMonth() {
+  const wrap = document.getElementById('dash-printer-of-month');
+  const titleEl = document.getElementById('dash-printer-of-month-title');
+  if (!wrap) return;
+  if (titleEl) {
+    const monthName = new Date().toLocaleDateString('ru-RU', { month: 'long' });
+    titleEl.textContent = `👑 Печатник месяца — ${monthName}`;
+  }
+  const totals = getOperatorTotalsForScope('month');
+  const names = Object.keys(totals);
+  if (!names.length) {
+    wrap.innerHTML = `<div class="text-[10px] text-white/60 text-center py-2">В этом месяце пока нет данных.</div>`;
+    return;
+  }
+  const ranked = names.map(name => {
+    const t = totals[name];
+    return { name, rawRolls: t.raw / METERS_PER_ROLL, netRolls: t.net / METERS_PER_ROLL };
+  }).sort((a, b) => b.netRolls - a.netRolls);
+  const top3 = ranked.slice(0, 3);
+  const podiumOrder = [1, 0, 2]; // визуально: 2-й, 1-й, 3-й
+  const heights = ['h-14', 'h-20', 'h-10'];
+  const medals = ['🥈', '🥇', '🥉'];
+  const podiumHtml = `<div class="flex items-end justify-center gap-2">` +
+    podiumOrder.filter(i => top3[i]).map(i => {
+      const p = top3[i];
+      return `<div class="flex-1 text-center min-w-0">
+        <div class="text-xl">${medals[i]}</div>
+        <div class="text-[10px] font-black text-white truncate px-1">${escapeHtmlProd(p.name)}</div>
+        <div class="text-[9px] text-white/70">${Math.round(p.netRolls)} рул.</div>
+        <div class="${heights[i]} bg-white/15 rounded-t-lg mt-1"></div>
+      </div>`;
+    }).join('') + `</div>`;
+  const restHtml = ranked.slice(3).map((p, i) => `<div class="flex items-center justify-between text-[10px] text-white/70 py-0.5"><span>${i + 4}. ${escapeHtmlProd(p.name)}</span><span class="font-bold">${Math.round(p.netRolls)} рул.</span></div>`).join('');
+  wrap.innerHTML = podiumHtml + (restHtml ? `<div class="pt-2 mt-2 border-t border-white/10 space-y-0.5">${restHtml}</div>` : '');
+}
+// ===== Табло для цеха: полноэкранный режим без лишних кнопок =====
+let shopBoardInterval = null;
+function openShopBoard() {
+  const el = document.getElementById('shop-board-view');
+  if (!el) return;
+  el.classList.remove('hidden');
+  renderShopBoard();
+  if (shopBoardInterval) clearInterval(shopBoardInterval);
+  shopBoardInterval = setInterval(renderShopBoard, 5000);
+  try { if (el.requestFullscreen) el.requestFullscreen().catch(() => {}); } catch (e) {}
+}
+function closeShopBoard() {
+  const el = document.getElementById('shop-board-view');
+  if (el) el.classList.add('hidden');
+  if (shopBoardInterval) { clearInterval(shopBoardInterval); shopBoardInterval = null; }
+  try { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch (e) {}
+}
+function renderShopBoard() {
+  const el = document.getElementById('shop-board-view');
+  if (!el || el.classList.contains('hidden')) return;
+  const timeEl = document.getElementById('shop-board-time');
+  if (timeEl) timeEl.textContent = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const totals = getOperatorTotalsForScope('shift');
+  const names = Object.keys(totals);
+  const listEl = document.getElementById('shop-board-personal-list');
+  if (listEl) {
+    if (!names.length) {
+      listEl.innerHTML = `<div class="text-center text-white/50 text-xl py-6">Пока никто не выкатал ни одного рулона за эту смену</div>`;
+    } else {
+      const ranked = names.map(name => { const t = totals[name]; return { name, netRolls: t.net / METERS_PER_ROLL }; }).sort((a, b) => b.netRolls - a.netRolls).slice(0, 8);
+      const leader = ranked[0].netRolls || 1;
+      const medals = ['🥇', '🥈', '🥉'];
+      listEl.innerHTML = ranked.map((p, idx) => {
+        const pct = Math.max(4, Math.round((p.netRolls / leader) * 100));
+        return `<div class="space-y-1.5">
+          <div class="flex items-center justify-between text-2xl font-black text-white">
+            <span class="truncate pr-2">${medals[idx] || (idx + 1) + '.'} ${escapeHtmlProd(p.name)}</span>
+            <span class="shrink-0">${Math.round(p.netRolls)} рул.</span>
+          </div>
+          <div class="h-3 bg-white/10 rounded-full overflow-hidden"><div class="bg-cyan-400 h-full rounded-full transition-all" style="width:${pct}%"></div></div>
+        </div>`;
+      }).join('');
+    }
+  }
+  const team = getShiftTeamTotals('day');
+  const teamEl = document.getElementById('shop-board-team');
+  if (teamEl) {
+    const dayRolls = Math.round(team.day.net / METERS_PER_ROLL), nightRolls = Math.round(team.night.net / METERS_PER_ROLL);
+    teamEl.innerHTML = `<div class="flex items-center justify-around text-white">
+      <div class="text-center"><div class="text-4xl">☀️</div><div class="text-3xl font-black">${dayRolls}</div><div class="text-xs uppercase text-white/60 tracking-wide">Дневная</div></div>
+      <div class="text-2xl text-white/30 font-black">VS</div>
+      <div class="text-center"><div class="text-4xl">🌙</div><div class="text-3xl font-black">${nightRolls}</div><div class="text-xs uppercase text-white/60 tracking-wide">Ночная</div></div>
+    </div>`;
+  }
 }
 // Кэш последнего отрисованного статуса карточки (per prefix+линия), чтобы
 // пассивные фоновые обновления (опрос облака раз в 2с, тикер раз в 30с)
