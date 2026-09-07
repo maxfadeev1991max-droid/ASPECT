@@ -1000,6 +1000,11 @@
         <button onclick="connectSheetDbSync()" class="bg-emerald-600 rounded-lg py-1.5 text-[9px] font-black uppercase">🔗 Подключить</button>
         <button onclick="disconnectSheetDbSync()" class="bg-red-700 rounded-lg py-1.5 text-[9px] font-black uppercase">🔌 Отключить</button>
       </div>
+      <!-- Временная кнопка диагностики загрузки фото в Google Диск — использует
+           УЖЕ подключённый и рабочий URL (тот же, что и обычная синхронизация),
+           так что не нужно никуда вручную копировать ссылки. Можно убрать после
+           того, как загрузка фото заработает. -->
+      <button onclick="testPhotoUploadFromApp()" class="w-full bg-amber-600 rounded-lg py-1.5 text-[9px] font-black uppercase">🧪 Проверить загрузку фото в облако</button>
     </div>
     </div>
   </div>
@@ -4109,6 +4114,26 @@ async function pushCloudSnapshotWithRetry(mutateFn, verifyFn, maxAttempts) {
     await new Promise(r => setTimeout(r, 250 + Math.random() * 250));
   }
   return { remote: lastRemote, result: null, unverified: true };
+}
+
+// Временная диагностика: шлёт крошечное тестовое фото на уже подключённый
+// (и заведомо рабочий, раз обычная синхронизация работает) URL Apps Script
+// и показывает точный ответ сервера — без ручного копирования ссылок.
+async function testPhotoUploadFromApp() {
+  const cfg = sheetDbConfig || loadSheetDbConfig();
+  if (!cfg || !cfg.url) { alert('Сначала подключите общую базу (кнопка "Подключить" выше) — тест использует тот же URL.'); return; }
+  const TEST_BASE64 = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=';
+  try {
+    alert('Отправляю тестовое фото на сервер, подождите...');
+    const resp = await fetch(cfg.url, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'uploadPhoto', base64: TEST_BASE64, fileName: 'ТЕСТ_' + Date.now() + '.jpg' })
+    });
+    const text = await resp.text();
+    alert('Ответ сервера:\n\n' + text);
+  } catch (e) {
+    alert('Не удалось даже отправить запрос (проблема с интернетом или самим URL):\n\n' + (e.message || e));
+  }
 }
 
 function toggleSyncSettings() {
