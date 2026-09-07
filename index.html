@@ -3569,6 +3569,11 @@ let wbMultiplier = { theo: {r:1,g:1,b:1}, actual: {r:1,g:1,b:1}, split: {r:1,g:1
 let isCalibrationMode = false, splitPoints = [], splitDividerPercent = 50, isDraggingDivider = false;
 let lastUnevennessMaxDE = null; // разнотон внутри рулона — снижает доверие к подсказкам, если высокий
 let lastSwatchColors = { theo: null, actual: null }; // последние усреднённые цвета — для крупного просмотра "Эталон/Замес"
+// Облачные ссылки на фото Эталона/Замеса (Google Drive) и промисы их загрузки —
+// см. uploadPhotoAndGetUrl(). saveRecipe() дожидается pendingPhotoUploads перед
+// сохранением рецепта, чтобы в объект попала уже готовая ссылка, а не null.
+let lastPhotoUrls = { theo: null, actual: null };
+let pendingPhotoUploads = { theo: null, actual: null };
 const STORE_NAME = 'recipes';
 const CASES_STORE = 'cases';
 const PROD_STORE = 'production_batches'; // Производство и контроль качества: партии (бирки на ведро) с полной цепочкой
@@ -4010,6 +4015,32 @@ async function pushCloudSnapshot(record) {
   const out = await resp.json().catch(() => ({ ok: true }));
   if (out && out.ok === false) throw new Error(out.error || 'Ошибка записи в таблицу');
   return true;
+}
+
+// ---- Фото Эталона/Замеса в облако (Google Drive через тот же Apps Script) ----
+// Сами base64-фото НЕ кладём в общий JSON-снимок (fetchCloudSnapshot/
+// pushCloudSnapshot) — ячейка Google Sheets ограничена ~50 000 символов, а
+// каждая отправка гоняет туда-обратно ВЕСЬ снимок (рецепты, забеги линий,
+// заявки и т.д.), и разбухшие фото замедлили бы синк для всех. Вместо этого
+// файл грузится в папку на Google Диске (см. функцию uploadPhotoToDrive в
+// Code.gs), а в рецепт (и в Sheets) попадает только короткая ссылка на него.
+// Требует action=uploadPhoto в Code.gs — см. инструкцию рядом с приложением.
+async function uploadPhotoAndGetUrl(dataUrl, fileName) {
+  const cfg = sheetDbConfig || loadSheetDbConfig();
+  if (!cfg || !cfg.url) return null; // общая база не подключена — фото остаётся только локально на этом телефоне
+  try {
+    const resp = await fetch(cfg.url, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'uploadPhoto', base64: dataUrl, fileName: fileName })
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const out = await resp.json();
+    if (!out || !out.ok || !out.url) throw new Error((out && out.error) || 'Пустой ответ');
+    return out.url;
+  } catch (e) {
+    console.error('Не удалось загрузить фото в облако:', e);
+    return null;
+  }
 }
 
 // ---- Надёжная запись с проверкой и повтором (исправление гонки записи) ----
@@ -19682,8 +19713,9 @@ function handleFile(input, type) {
       else { if (h > max) { w = w * max / h; h = max; } }
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       const layer = document.getElementById(type + '-photo-layer');
-      layer.innerHTML = `<img src="${canvas.toDataURL('image/jpeg', 0.85)}" class="photo-layer"/>`;
+      layer.innerHTML = `<img src="${dataUrl}" class="photo-layer"/>`;
       layer.classList.remove('hidden');
       if (type === 'theo') theoPoints = [];
       else actualPoints = [];
@@ -19691,6 +19723,17 @@ function handleFile(input, type) {
       updateWBBadges();
       renderPoints(type);
       runAnalysis();
+      // Новое фото — сбрасываем прежнюю облачную ссылку этого типа и
+      // запускаем загрузку в фоне; saveRecipe() дождётся её перед сохранением.
+      if (type === 'theo' || type === 'actual') {
+        lastPhotoUrls[type] = null;
+        pendingPhotoUploads[type] = uploadPhotoAndGetUrl(dataUrl, `${type}_${Date.now()}.jpg`)
+          .then(url => {
+            lastPhotoUrls[type] = url;
+            if (!url) toast(`⚠️ Фото «${type === 'theo' ? 'Эталон' : 'Замес'}» не загрузилось в облако — останется только на этом телефоне`);
+            return url;
+          });
+      }
     };
     img.src = e.target.result;
   };
@@ -19710,6 +19753,8 @@ function toggleFullscreen(type) {
 function startNewEntry() {
   if (!confirm('Очистить фото и текущий рецепт для ввода нового артикула?')) return;
   clearDraft();
+  lastPhotoUrls = { theo: null, actual: null };
+  pendingPhotoUploads = { theo: null, actual: null };
 
   if (typeof liveStream !== 'undefined' && liveStream) stopLiveCamera();
 
@@ -19803,6 +19848,8 @@ function buildRecipeObject(idOverride) {
     baseLot: (document.getElementById('base-lot') ? document.getElementById('base-lot').value.trim() : '') || null,
     pigmentLots: (document.getElementById('pigment-lots') ? document.getElementById('pigment-lots').value.trim() : '') || null,
     weightKg: parseFloat((document.getElementById('mix-weight') || {}).value) || 30,
+    theoPhotoUrl: lastPhotoUrls.theo || null,
+    actualPhotoUrl: lastPhotoUrls.actual || null,
     ...reminderFields,
     cyan: parseFloat(document.getElementById('cyan').value)||0,
     magenta: parseFloat(document.getElementById('magenta').value)||0,
@@ -19857,6 +19904,13 @@ function notifyShiftLeadHighDeviation(recipe) {
 // получит новую точку).
 let pendingDuplicateExisting = null;
 async function saveRecipe() {
+  // Если фото Эталона/Замеса ещё грузится в облако (обычно доли секунды,
+  // но на плохом заводском интернете дольше) — дожидаемся здесь, чтобы в
+  // рецепт попала готовая ссылка, а не null.
+  if (pendingPhotoUploads.theo || pendingPhotoUploads.actual) {
+    toast('☁️ Догружаем фото в облако перед сохранением…');
+    await Promise.all([pendingPhotoUploads.theo, pendingPhotoUploads.actual]);
+  }
   const article = (document.getElementById('article').value || '').trim();
   if (article && db) {
     const all = await getAllLocalRecipes();
@@ -19941,6 +19995,23 @@ function loadRecipeIntoForm(id) {
   if (document.getElementById('pigment-lots')) document.getElementById('pigment-lots').value = r.pigmentLots || '';
   if (typeof setMainPasteKeys === 'function') { setMainPasteKeys(r.pasteKeys || []); renderMainPasteSelection(); }
   renderBaseStrengthNote();
+  // Фото Эталона/Замеса этого рецепта (если были загружены и успели уйти в
+  // облако) — подтягиваются по ссылке на Google Диск и показываются даже
+  // на другом устройстве/компьютере, где локально их никогда не было.
+  ['theo', 'actual'].forEach(type => {
+    const url = type === 'theo' ? r.theoPhotoUrl : r.actualPhotoUrl;
+    const layer = document.getElementById(type + '-photo-layer');
+    if (!layer) return;
+    if (url) {
+      layer.innerHTML = `<img src="${url}" class="photo-layer" crossorigin="anonymous"/>`;
+      layer.classList.remove('hidden');
+      lastPhotoUrls[type] = url;
+    } else {
+      layer.innerHTML = '';
+      layer.classList.add('hidden');
+      lastPhotoUrls[type] = null;
+    }
+  });
   updateUI();
   logCorrection(`Загрузили рецепт «${r.name}» из библиотеки в форму`, 'load');
 }
