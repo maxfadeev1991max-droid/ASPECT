@@ -1096,6 +1096,12 @@
     </div>
 
 
+    <!-- Live-панель: показывает, что ПРЯМО СЕЙЧАС снимают/сверяют коллеги на
+         своих устройствах (фото Эталон/Замес, число точек, текущая ΔE) —
+         обновляется в фоне, без перезагрузки страницы. Своя же сессия сюда
+         не попадает, только чужие. -->
+    <div id="live-color-sessions" class="hidden px-1"></div>
+
     <!-- Фото: раздельные снимки -->
     <div id="dual-photo-section" class="grid grid-cols-2 gap-4">
       <div class="space-y-2">
@@ -4597,6 +4603,117 @@ function startPresenceHeartbeatTimer() {
   presenceHeartbeatTimer = setInterval(sendPresenceHeartbeat, 30000);
 }
 
+// ---------- Live-сессии колориста: коллеги видят фото/точки/ΔE ДО сохранения рецепта ----------
+// Раньше фото Эталона/Замеса и текущая ΔE становились видны другим устройствам
+// только после нажатия "Сохранить рецепт" — то есть коллега мог полминуты и
+// больше не видеть, что кто-то уже сфотографировал эталон и сверяет цвет.
+// Здесь тот же общий JSON-снимок (та же таблица, что и presence/чат) несёт
+// дополнительное поле liveColorSessions — по одной "живой" записи на
+// пользователя, которая обновляется по мере простановки точек/загрузки фото
+// и считается устаревшей (и переставший её видеть у себя) через
+// LIVE_SESSION_STALE_MS без обновлений — как presence.
+const LIVE_SESSION_STALE_MS = 3 * 60 * 1000;
+let liveColorSessionThrottleTimer = null;
+let liveColorSessionPollTimer = null;
+
+function scheduleLiveColorSessionBroadcast() {
+  // Не шлём в облако на каждый клик/кадр — не чаще раза в ~2.5с, иначе при
+  // быстрой простановке точек мы бы забивали таблицу лишними записями.
+  clearTimeout(liveColorSessionThrottleTimer);
+  liveColorSessionThrottleTimer = setTimeout(broadcastLiveColorSession, 2500);
+}
+
+async function broadcastLiveColorSession() {
+  if (!currentUserProfile) return;
+  const cfg = sheetDbConfig || loadSheetDbConfig();
+  if (!cfg || !cfg.url) return;
+  const hasTheo = (typeof theoPoints !== 'undefined' && theoPoints.length > 0) || (typeof lastPhotoUrls !== 'undefined' && lastPhotoUrls.theo);
+  const hasActual = (typeof actualPoints !== 'undefined' && actualPoints.length > 0) || (typeof lastPhotoUrls !== 'undefined' && lastPhotoUrls.actual);
+  if (!hasTheo && !hasActual) return; // нечего показывать коллегам
+  const now = Date.now();
+  const articleEl = document.getElementById('article');
+  const mySession = {
+    name: currentUserProfile.name,
+    role: currentUserProfile.role,
+    ts: now,
+    article: articleEl ? (articleEl.value || '') : '',
+    theoPhotoUrl: (lastPhotoUrls && lastPhotoUrls.theo) || null,
+    actualPhotoUrl: (lastPhotoUrls && lastPhotoUrls.actual) || null,
+    theoPointsCount: theoPoints.length,
+    actualPointsCount: actualPoints.length,
+    dE: (typeof lastMainDE === 'number') ? lastMainDE : null
+  };
+  try {
+    let sessions = [];
+    await pushCloudSnapshotWithRetry((r) => {
+      sessions = (r.liveColorSessions || []).filter(s => s && s.name && (now - (s.ts || 0)) < LIVE_SESSION_STALE_MS && s.name !== currentUserProfile.name);
+      sessions.push(mySession);
+      r.liveColorSessions = sessions;
+      return sessions;
+    }, (r) => Array.isArray(r.liveColorSessions) && r.liveColorSessions.some(s => s && s.name === currentUserProfile.name && s.ts === now), 2);
+    renderLiveColorSessions(sessions);
+  } catch (e) { console.error(e); }
+}
+
+function renderLiveColorSessions(sessions) {
+  const box = document.getElementById('live-color-sessions');
+  if (!box) return;
+  const now = Date.now();
+  const others = (sessions || []).filter(s => s && s.name && (!currentUserProfile || s.name !== currentUserProfile.name) && (now - (s.ts || 0)) < LIVE_SESSION_STALE_MS);
+  if (!others.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  box.classList.remove('hidden');
+  box.innerHTML = '<div class="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">👀 Сейчас сверяют цвет</div>' + others.map(s => {
+    const deColor = (typeof s.dE !== 'number') ? 'text-gray-400' : (s.dE < 1.0 ? 'text-emerald-400' : s.dE < 2.5 ? 'text-amber-400' : 'text-red-500');
+    const deLabel = (typeof s.dE === 'number') ? ('ΔE ' + s.dE.toFixed(1)) : '—';
+    return `<div class="flex items-center gap-2 bg-slate-800/90 border border-slate-600 rounded-xl px-2 py-1.5 mb-1">
+      <div class="flex -space-x-2 shrink-0">
+        ${s.theoPhotoUrl ? `<img src="${s.theoPhotoUrl}" class="w-8 h-8 rounded-lg object-cover border-2 border-slate-700" title="Эталон"/>` : `<div class="w-8 h-8 rounded-lg bg-slate-700 border-2 border-slate-600"></div>`}
+        ${s.actualPhotoUrl ? `<img src="${s.actualPhotoUrl}" class="w-8 h-8 rounded-lg object-cover border-2 border-slate-700" title="Замес"/>` : `<div class="w-8 h-8 rounded-lg bg-slate-700 border-2 border-slate-600"></div>`}
+      </div>
+      <div class="flex-1 min-w-0 text-[9px] text-gray-300">
+        <div class="font-black truncate">${escapeHtmlProd(s.name)}${s.article ? ' · ' + escapeHtmlProd(s.article) : ''}</div>
+        <div class="opacity-70">Ф:${s.theoPointsCount || 0} П:${s.actualPointsCount || 0}</div>
+      </div>
+      <div class="text-xs font-black shrink-0 ${deColor}">${deLabel}</div>
+    </div>`;
+  }).join('');
+}
+
+// Убирает собственную live-сессию у коллег сразу (не дожидаясь истечения
+// LIVE_SESSION_STALE_MS) — вызывается при вводе нового артикула, чтобы не
+// показывать другим устройствам уже неактуальное фото/ΔE.
+async function clearMyLiveColorSession() {
+  clearTimeout(liveColorSessionThrottleTimer);
+  if (!currentUserProfile) return;
+  const cfg = sheetDbConfig || loadSheetDbConfig();
+  if (!cfg || !cfg.url) return;
+  try {
+    let sessions = [];
+    await pushCloudSnapshotWithRetry((r) => {
+      sessions = (r.liveColorSessions || []).filter(s => s && s.name && s.name !== currentUserProfile.name);
+      r.liveColorSessions = sessions;
+      return sessions;
+    }, () => true, 1);
+    renderLiveColorSessions(sessions);
+  } catch (e) { console.error(e); }
+}
+
+// Отдельный быстрый опрос (раз в 5с) ТОЛЬКО ради живых сессий коллег — обычная
+// syncFromSheetDb идёт раз в 30с и тащит куда больше данных (рецепты, чат,
+// заявки и т.д.), а тут нужен лёгкий и частый пинг, чтобы фото/ΔE коллеги
+// действительно появлялись "сразу", а не с задержкой в полминуты.
+function startLiveColorSessionPolling() {
+  if (liveColorSessionPollTimer) clearInterval(liveColorSessionPollTimer);
+  liveColorSessionPollTimer = setInterval(async () => {
+    const cfg = sheetDbConfig || loadSheetDbConfig();
+    if (!cfg || !cfg.url) return;
+    try {
+      const remote = await fetchCloudSnapshot();
+      if (remote) renderLiveColorSessions(remote.liveColorSessions);
+    } catch (e) { /* тихо пропускаем — обычный опрос всё равно подхватит позже */ }
+  }, 5000);
+}
+
 function initUserProfile() {
   currentUserProfile = loadUserProfile();
   chatLastReadTs = loadChatLastRead();
@@ -4699,6 +4816,7 @@ async function syncFromSheetDb(isManual) {
     setSyncStatus('🟢 Общая база подключена (Google Sheets) — обновлено ' + new Date().toLocaleTimeString('ru-RU'));
     markSyncSuccess();
     if (typeof renderOnlineUsers === 'function') renderOnlineUsers(remote.presence);
+    if (typeof renderLiveColorSessions === 'function') renderLiveColorSessions(remote.liveColorSessions);
     applyIncomingChat(remote.chat, remote.chatReads);
     applyIncomingMultipliers(remote);
     applyIncomingShiftCorrections(remote);
@@ -4779,6 +4897,7 @@ function startSheetDbAutoSync() {
   sheetDbAutoSyncTimer = setInterval(() => {
     if (sheetDbConfig || loadSheetDbConfig()) syncFromSheetDb(false);
   }, 30000);
+  startLiveColorSessionPolling();
 }
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && (sheetDbConfig || loadSheetDbConfig())) { syncFromSheetDb(false); sendPresenceHeartbeat(); }
@@ -9821,6 +9940,7 @@ function addPoint(event, type) {
   points.push({ x, y, region: pointRegion, color: { r: Math.round(avgR * wb.r), g: Math.round(avgG * wb.g), b: Math.round(avgB * wb.b) } });
   renderPoints(type);
   runAnalysis();
+  scheduleLiveColorSessionBroadcast();
   if (type === 'theo' && typeof refreshArticleAiSuggestionIfNeeded === 'function') refreshArticleAiSuggestionIfNeeded();
 }
 
@@ -19731,6 +19851,9 @@ function handleFile(input, type) {
           .then(url => {
             lastPhotoUrls[type] = url;
             if (!url) toast(`⚠️ Фото «${type === 'theo' ? 'Эталон' : 'Замес'}» не загрузилось в облако — останется только на этом телефоне`);
+            // Как только ссылка на фото готова — сразу показываем её коллегам,
+            // не дожидаясь "Сохранить рецепт".
+            if (url) scheduleLiveColorSessionBroadcast();
             return url;
           });
       }
@@ -19755,6 +19878,7 @@ function startNewEntry() {
   clearDraft();
   lastPhotoUrls = { theo: null, actual: null };
   pendingPhotoUploads = { theo: null, actual: null };
+  clearMyLiveColorSession();
 
   if (typeof liveStream !== 'undefined' && liveStream) stopLiveCamera();
 
