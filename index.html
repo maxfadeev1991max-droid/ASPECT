@@ -6272,6 +6272,9 @@ async function announcePaintPoured(line) {
 const PAINT_ALERT_POLL_MS = 2000;
 let paintQueueFetchSequence = 0;
 let paintQueueAppliedSequence = 0;
+// Сигнатура последнего отрисованного состояния заявок «Нужна краска» —
+// см. фикс мигания панели в checkPaintAlertOnce.
+let lastRenderedPaintRequestsSignature = null;
 function startPaintAlertPolling() {
   if (paintAlertPollTimer) return;
   shownPaintAlertTs = loadShownPaintAlertTs();
@@ -6308,7 +6311,17 @@ async function checkPaintAlertOnce() {
         paintQueueAppliedSequence = thisPaintQueueSequence;
         paintRequests = mergePaintRequestsWithLocalDelivery(remote.paintRequests || []);
         coloristLocks = remote.coloristLocks || {};
-        renderPaintRequestsSection();
+        // ИСПРАВЛЕНО (баг "панель заявок постоянно моргает"): раньше
+        // renderPaintRequestsSection() вызывался на КАЖДЫЙ тик опроса
+        // (каждые 2 секунды), даже если ни одна заявка не изменилась —
+        // innerHTML списка пересобирался заново из ничего, отсюда видимое
+        // мигание. Теперь перерисовываем только если состав/статусы заявок
+        // реально изменились с прошлого раза.
+        const paintRequestsSignature = JSON.stringify((paintRequests || []).map(r => [r.id, r.status, r.inProgressBy, r.doneBy, r.cancelledBy, (r.comments || []).length]));
+        if (paintRequestsSignature !== lastRenderedPaintRequestsSignature) {
+          lastRenderedPaintRequestsSignature = paintRequestsSignature;
+          renderPaintRequestsSection();
+        }
         renderColoristLockUI();
         checkOverdueRequests();
         checkCancelledOwnRequests();
@@ -7615,8 +7628,21 @@ function renderPaintRequestsSection() {
     // Позиция в очереди считается в том же порядке, в каком заявки видит
     // колорист (urgency, потом время) — только по активным (pending/in_progress).
     const globalQueue = sortPaintRequestsForQueue(paintRequests.filter(r => r.status === 'pending' || r.status === 'in_progress'));
-    const mine = paintRequests.filter(r => String(r.line) === String(currentUserProfile.line))
+    // ИСПРАВЛЕНО (баг "последний заказ краски висит и не удаляется"):
+    // раньше здесь показывалась ВСЯ история заявок печатника по его линии
+    // без ограничения — выполненные и отменённые заявки оставались в списке
+    // навсегда (сервер не удаляет записи физически, только меняет статус,
+    // см. mergePaintRequestsSafe_ в Code.gs), и создавалось впечатление,
+    // что старая заявка "зависла". Теперь: активные (pending/in_progress)
+    // показываются всегда, а завершённые (done/cancelled) — только 3
+    // последние, остальные сворачиваются в счётчик.
+    const mineAll = paintRequests.filter(r => String(r.line) === String(currentUserProfile.line))
       .sort((a, b) => b.ts - a.ts);
+    const mineActive = mineAll.filter(r => r.status === 'pending' || r.status === 'in_progress');
+    const mineFinished = mineAll.filter(r => r.status === 'done' || r.status === 'cancelled');
+    const mineFinishedShown = mineFinished.slice(0, 3);
+    const mineFinishedHiddenCount = mineFinished.length - mineFinishedShown.length;
+    const mine = mineActive.concat(mineFinishedShown);
     const listEl = document.getElementById('paint-request-mine-list');
     if (listEl) {
       listEl.innerHTML = mine.length ? mine.map(r => {
@@ -7627,6 +7653,11 @@ function renderPaintRequestsSection() {
         if (posLabel) details.push(posLabel);
         details.push(paintRequestElapsedLabel(r.ts) + ' назад');
         const canComment = r.status === 'pending' || r.status === 'in_progress';
+        // Печатник теперь может сам отменить СВОЮ ещё не выполненную заявку
+        // (раньше это могли только колорист/начальник смены/мастер УПП —
+        // печатник не мог убрать даже явно ошибочную свою заявку).
+        const canCancelOwn = r.status === 'pending' || r.status === 'in_progress';
+        const isBusy = paintRequestActionsInFlight.has(r.id);
         return `
         <div class="text-[10px] bg-gray-50 rounded-xl px-3 py-2">
           <div class="flex items-center justify-between gap-2">
@@ -7636,12 +7667,14 @@ function renderPaintRequestsSection() {
             </div>
             <div class="flex items-center gap-1.5 shrink-0">
               ${canComment ? `<button onclick="addPaintRequestComment('${r.id}')" class="text-[9px] text-blue-500 font-black uppercase">💬</button>` : ''}
+              ${canCancelOwn ? `<button onclick="cancelPaintRequest('${r.id}')" ${isBusy ? 'disabled' : ''} class="text-gray-300 text-[10px] px-1${isBusy ? ' opacity-50 pointer-events-none' : ''}">${isBusy ? '…' : '✕'}</button>` : ''}
               <span>${paintRequestStatusIcon(r.status)}</span>
             </div>
           </div>
           ${paintRequestCommentsHtml(r)}
         </div>`;
-      }).join('') : '<div class="text-[10px] text-gray-400 text-center py-2">Заявок пока нет</div>';
+      }).join('') + (mineFinishedHiddenCount > 0 ? `<div class="text-[9px] text-gray-300 text-center py-1">и ещё ${mineFinishedHiddenCount} завершённых — см. историю у начальника смены</div>` : '')
+        : '<div class="text-[10px] text-gray-400 text-center py-2">Заявок пока нет</div>';
     }
   } else if (role === 'colorist' || role === 'shift_lead' || role === 'upp_master' || role === 'production_director' || role === 'shop_chief') {
     // По просьбе: заявки "нужна краска" должны видеть ВСЕ участники
