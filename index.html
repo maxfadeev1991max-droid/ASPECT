@@ -6894,6 +6894,11 @@ function openChatModal() {
     return;
   }
   el.classList.remove('hidden');
+  // ИСПРАВЛЕНИЕ: у "светофора смены" z-index (500) выше, чем у окна чата
+  // (z-50), поэтому светофор физически лежал ПОВЕРХ чата и перекрывал
+  // поле ввода сообщения на телефоне. Прячем светофор на время, пока чат
+  // открыт, и возвращаем при закрытии.
+  hideShiftTrafficLightForModal_();
   switchChatTab('group');
   const cfg = sheetDbConfig || loadSheetDbConfig();
   const hasCfg = !!(cfg && cfg.url);
@@ -6918,10 +6923,39 @@ function openChatModal() {
 function closeChatModal() {
   const el = document.getElementById('chat-modal');
   if (el) el.classList.add('hidden');
+  restoreShiftTrafficLightAfterModal_();
   if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; }
   chatLastReadTs = Date.now();
   saveChatLastRead(chatLastReadTs);
   updateChatBadge();
+}
+// Пара к hideShiftTrafficLightForModal_ — прячет "светофор смены" и его
+// раскрытую панель, пока открыто модальное окно чата (иначе он лежит
+// поверх поля ввода из-за высокого z-index), и возвращает как было при
+// закрытии чата.
+function hideShiftTrafficLightForModal_() {
+  const light = document.getElementById('shift-traffic-light');
+  const panel = document.getElementById('shift-traffic-panel');
+  if (light && !light.classList.contains('hidden')) {
+    light.dataset.hiddenByModal = '1';
+    light.classList.add('hidden');
+  }
+  if (panel && !panel.classList.contains('hidden')) {
+    panel.dataset.hiddenByModal = '1';
+    panel.classList.add('hidden');
+  }
+}
+function restoreShiftTrafficLightAfterModal_() {
+  const light = document.getElementById('shift-traffic-light');
+  const panel = document.getElementById('shift-traffic-panel');
+  if (light && light.dataset.hiddenByModal) {
+    delete light.dataset.hiddenByModal;
+    light.classList.remove('hidden');
+  }
+  if (panel && panel.dataset.hiddenByModal) {
+    delete panel.dataset.hiddenByModal;
+    panel.classList.remove('hidden');
+  }
 }
 // ИСПРАВЛЕНО (баг "сообщение показано только у вас, но стоит обычная ✓"):
 // раньше неотправленное сообщение молча оставалось в chatPendingMessages —
@@ -8249,6 +8283,54 @@ function renderPaintRequestStats() {
 // нужно никого искать по имени, он просто открывает свою панель и видит,
 // кто сейчас наливает, сколько уже закрыл заявок и не завис ли кто-то на
 // одной заявке дольше порога простоя (тот же порог, что и в очереди заявок).
+// ИСПРАВЛЕНИЕ: люди в приложении пишут своё имя то «Имя Фамилия», то
+// «Фамилия Имя» (а иногда с разным регистром) — раньше статистика
+// группировала строго по точной строке, поэтому один и тот же человек
+// превращался в двух разных в списках. normalizePersonNameKey_ строит
+// ключ, не зависящий от регистра и порядка слов («Сергей Скуточкин» и
+// «Скуточкин Сергей» дают одинаковый ключ), чтобы такие записи считались
+// одним человеком. Для отображения используем то написание имени, которое
+// встречается чаще всего — так фамилия/имя не будет прыгать местами.
+function normalizePersonNameKey_(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .sort()
+    .join(' ');
+}
+// Чистит только "невидимые" отличия в пробелах (двойной пробел,
+// неразрывный пробел \u00A0 и т.п., пробел в начале/конце), НЕ трогая
+// регистр и порядок слов — в отличие от normalizePersonNameKey_. Нужна
+// там, где нельзя менять порядок слов (например, разные люди могут
+// случайно получить одинаковый набор слов), а важно только убрать
+// технический мусор в пробелах, из-за которого одно и то же имя
+// превращается в два разных ключа.
+function normalizeOperatorWhitespace_(name) {
+  return String(name || '')
+    .replace(/[\u00A0\u2000-\u200B\u202F\uFEFF]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+// ИСПРАВЛЕНИЕ: разные написания имени одного и того же человека, которые
+// автоматика (регистр/порядок слов/пробелы) сама угадать не должна — иначе
+// рано или поздно случайно склеятся два РАЗНЫХ человека с похожими именами
+// (например, два разных Ивановых). «Артём» и «Артемий» — разные слова, но
+// по факту оказались одним и тем же сотрудником (Козин), поэтому это
+// решается только вручную, через список ниже.
+// Как добавить нового: слева — с маленькой буквы, как встречается в базе
+// (регистр и порядок слов уже не важны, это чистится отдельно), справа —
+// каноничное написание, которое должно показываться везде.
+const PERSON_NAME_ALIASES_ = {
+  'козин артем': 'Козин Артемий'
+};
+function applyPersonNameAlias_(name) {
+  const cleaned = normalizeOperatorWhitespace_(name);
+  const key = cleaned.toLowerCase();
+  return PERSON_NAME_ALIASES_[key] || cleaned;
+}
 const LEAD_COLORIST_STATS_WINDOW_MS = 12 * 60 * 60 * 1000;
 // targetElId/badgeElId позволяют переиспользовать один и тот же расчёт для
 // двух мест: карточка «Колористы за эту смену» на Панели начальника смены
@@ -8272,14 +8354,21 @@ function renderLeadColoristStats(targetElId, badgeElId) {
     const lastTs = Math.max(r.ts || 0, r.inProgressTs || 0, r.doneTs || 0);
     return lastTs >= cutoff && (r.status === 'done' || r.status === 'in_progress');
   });
-  const byName = new Map(); // ключ — имя в нижнем регистре, значение — {displayName, done:[], active:null}
+  const byName = new Map(); // ключ — нормализованное имя (см. normalizePersonNameKey_), значение — {displayName, nameCounts, done:[], active:null}
   relevant.forEach(r => {
     const rawName = r.status === 'done' ? r.doneBy : r.inProgressBy;
-    const name = String(rawName || '').trim();
+    const name = applyPersonNameAlias_(rawName);
     if (!name) return;
-    const key = name.toLowerCase();
-    if (!byName.has(key)) byName.set(key, { displayName: name, done: [], active: null });
+    const key = normalizePersonNameKey_(name);
+    if (!key) return;
+    if (!byName.has(key)) byName.set(key, { displayName: name, nameCounts: new Map(), done: [], active: null });
     const entry = byName.get(key);
+    // Показываем то написание имени, которое встречается чаще всего среди
+    // записей этого человека (порядок слов/регистр могли отличаться).
+    entry.nameCounts.set(name, (entry.nameCounts.get(name) || 0) + 1);
+    let bestName = name, bestCount = 0;
+    entry.nameCounts.forEach((count, n) => { if (count > bestCount) { bestCount = count; bestName = n; } });
+    entry.displayName = bestName;
     if (r.status === 'done') entry.done.push(r);
     else if (r.status === 'in_progress') {
       if (!entry.active || (r.inProgressTs || 0) > (entry.active.inProgressTs || 0)) entry.active = r;
@@ -20328,7 +20417,15 @@ function buildOperatorShiftBreakdown(lookbackMs) {
   const cutoff = lookbackMs ? Date.now() - lookbackMs : 0;
   (lineRuns || []).forEach(r => {
     if (!r.startTs || r.startTs < cutoff) return;
-    const creditName = r.operatorName || r.createdBy;
+    // ИСПРАВЛЕНИЕ: печатники иногда попадают в статистику с "невидимыми"
+    // отличиями в имени — двойной пробел, неразрывный пробел (часто
+    // вставляется при копировании текста с телефона) или пробел в
+    // начале/конце. Браузер схлопывает такие пробелы при отображении,
+    // поэтому имя выглядит одинаково, но для кода это два РАЗНЫХ ключа —
+    // отсюда дубли вроде двух строк «Потапкин Никита» с разными цифрами
+    // вместо одной общей суммы. normalizePersonNameKey_ здесь не подходит
+    // (она ещё и меняет порядок слов), поэтому только чистим пробелы.
+    const creditName = applyPersonNameAlias_(r.operatorName || r.createdBy);
     if (!creditName) return;
     if (r.role && r.role !== 'senior_printer' && r.role !== 'printer' && r.role !== 'shift_lead') return;
     const win = getCurrentShiftWindow(new Date(r.startTs));
@@ -23024,6 +23121,16 @@ async function renderMaterialAlerts() {
   const el = document.getElementById('material-alerts-list');
   if (!el) return;
   el.innerHTML = '<div class="text-center py-6"><span class="app-spinner"></span></div>';
+  // ИСПРАВЛЕНИЕ: как и в renderStatsView, тут не было обработки ошибок —
+  // при сбое крутилка-загрузчик оставалась висеть навсегда без сообщения.
+  try {
+    await renderMaterialAlertsBody_(el);
+  } catch (err) {
+    console.error('renderMaterialAlerts: не удалось построить алерты по сырью', err);
+    el.innerHTML = '<p class="text-red-500 text-center py-6 text-xs">Не удалось загрузить алерты по сырью: ' + escapeHtmlProd(String(err && err.message || err)) + '. Попробуйте обновить страницу.</p>';
+  }
+}
+async function renderMaterialAlertsBody_(el) {
   const all = await getAllRecipesFromDB();
   const now = Date.now();
   const windowMs = MATERIAL_ALERT_WINDOW_DAYS * 86400000;
@@ -23087,6 +23194,11 @@ function renderStatsView() {
   const el = document.getElementById('stats-content');
   if (!el) return;
   el.innerHTML = '<div class="text-center py-10"><span class="app-spinner"></span></div>';
+  // ИСПРАВЛЕНИЕ: раньше у этой цепочки не было .catch() — если внутри
+  // обработки данных (или в самом getAllRecipesFromDB) вылетала ошибка,
+  // крутилка-загрузчик оставалась висеть навсегда без единого сообщения
+  // об ошибке (пользователь видел просто вечно крутящееся колесико).
+  // Теперь ошибка хотя бы попадает в консоль и показывается человеку.
   getAllRecipesFromDB().then(all => {
     if (!all.length) { el.innerHTML = '<p class="text-gray-400 text-center py-8">Пока нет сохранённых рецептов</p>'; return; }
     const now = Date.now();
@@ -23288,6 +23400,9 @@ function renderStatsView() {
       const span = document.getElementById(id);
       if (span) animateCountUp(span, parseInt(span.dataset.target, 10) || 0);
     });
+  }).catch(err => {
+    console.error('renderStatsView: не удалось построить статистику', err);
+    el.innerHTML = '<p class="text-red-500 text-center py-8 text-xs">Не удалось загрузить статистику: ' + escapeHtmlProd(String(err && err.message || err)) + '. Попробуйте обновить страницу.</p>';
   });
 }
 
@@ -23554,20 +23669,29 @@ function computeLeadColoristTrendStats(days) {
   const list = (paintRequests || []).filter(r => r.status === 'done' && r.ts >= since && r.doneBy);
   const byColorist = {};
   list.forEach(r => {
-    const name = String(r.doneBy || '').trim() || 'Без имени';
-    if (!byColorist[name]) byColorist[name] = { count: 0, waitSum: 0, waitCount: 0, pourSum: 0, pourCount: 0 };
+    const rawName = applyPersonNameAlias_(r.doneBy) || 'Без имени';
+    const key = normalizePersonNameKey_(rawName) || 'без имени';
+    if (!byColorist[key]) byColorist[key] = { count: 0, waitSum: 0, waitCount: 0, pourSum: 0, pourCount: 0, nameCounts: {} };
+    const entry = byColorist[key];
+    entry.nameCounts[rawName] = (entry.nameCounts[rawName] || 0) + 1;
     const startTs = (typeof r.inProgressTs === 'number') ? r.inProgressTs : r.ts;
     const waitMs = startTs - r.ts;
     const pourMs = (typeof r.doneTs === 'number') ? r.doneTs - startTs : null;
-    byColorist[name].count++;
-    if (Number.isFinite(waitMs) && waitMs >= 0) { byColorist[name].waitSum += waitMs; byColorist[name].waitCount++; }
-    if (Number.isFinite(pourMs) && pourMs >= 0) { byColorist[name].pourSum += pourMs; byColorist[name].pourCount++; }
+    entry.count++;
+    if (Number.isFinite(waitMs) && waitMs >= 0) { entry.waitSum += waitMs; entry.waitCount++; }
+    if (Number.isFinite(pourMs) && pourMs >= 0) { entry.pourSum += pourMs; entry.pourCount++; }
   });
-  const rows = Object.entries(byColorist).map(([name, v]) => ({
-    name, count: v.count,
-    avgWait: v.waitCount ? v.waitSum / v.waitCount : null,
-    avgPour: v.pourCount ? v.pourSum / v.pourCount : null
-  })).sort((a, b) => b.count - a.count);
+  // Показываем то написание имени, которое встречается чаще всего среди
+  // записей этого человека (порядок слов/регистр могли отличаться).
+  const rows = Object.values(byColorist).map(v => {
+    let bestName = 'Без имени', bestCount = 0;
+    Object.entries(v.nameCounts).forEach(([n, count]) => { if (count > bestCount) { bestCount = count; bestName = n; } });
+    return {
+      name: bestName, count: v.count,
+      avgWait: v.waitCount ? v.waitSum / v.waitCount : null,
+      avgPour: v.pourCount ? v.pourSum / v.pourCount : null
+    };
+  }).sort((a, b) => b.count - a.count);
   return { total: list.length, rows };
 }
 function renderLeadColoristTrendStats(days) {
@@ -27469,7 +27593,14 @@ function closeTopmostOverlay() {
   ];
   for (const id of modalIds) {
     const el = document.getElementById(id);
-    if (el && !el.classList.contains('hidden')) { el.classList.add('hidden'); return true; }
+    if (el && !el.classList.contains('hidden')) {
+      // chat-modal закрываем через closeChatModal(), а не просто добавлением
+      // .hidden — иначе "светофор смены", спрятанный при открытии чата,
+      // не вернётся обратно (см. hideShiftTrafficLightForModal_).
+      if (id === 'chat-modal' && typeof closeChatModal === 'function') closeChatModal();
+      else el.classList.add('hidden');
+      return true;
+    }
   }
   const loupe = document.getElementById('adv-picker-magnifier');
   if (loupe) { hideAdvPickerMagnifier(); return true; }
