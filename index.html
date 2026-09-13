@@ -6056,7 +6056,7 @@ function renderLiveColorSessions(sessions) {
   // Совместная сессия — коллеги, работающие ПРЯМО СЕЙЧАС над тем же артикулом:
   // им показываем полный рецепт живьём с диффом по каждому пигменту и кнопку
   // "взять их пигменты". Остальные — просто фоновая заметка "кто чем занят".
-  const sameArticle = myArticle ? others.filter(s => (s.article || '').trim() === myArticle) : [];
+  const sameArticle = myArticle ? others.filter(s => String(s.article || '').trim() === myArticle) : [];
   const otherArticle = others.filter(s => !sameArticle.includes(s));
 
   let html = '';
@@ -6149,7 +6149,7 @@ function renderSessionComments() {
   wrap.classList.remove('hidden');
   const now = Date.now();
   const list = colorSessionComments
-    .filter(c => c && (c.article || '').trim() === myArticle && (now - (c.ts || 0)) < SESSION_COMMENT_MAX_AGE_MS)
+    .filter(c => c && String(c.article || '').trim() === myArticle && (now - (c.ts || 0)) < SESSION_COMMENT_MAX_AGE_MS)
     .sort((a, b) => (a.ts || 0) - (b.ts || 0));
   const listBox = document.getElementById('color-session-comments-list');
   if (listBox) {
@@ -8446,7 +8446,7 @@ function computeColoristDigitalTwins(recipes) {
     return byMaster[name];
   };
   (recipes || []).forEach(r => {
-    const name = (r.master || '').trim();
+    const name = String(r.master || '').trim();
     if (!name) return; // без указанного мастера рецепт нельзя привязать к конкретному человеку
     const p = ensure(name);
     p.recipes.push(r);
@@ -8525,7 +8525,7 @@ async function refreshColoristDigitalTwins() {
 function classifyArticleComplexity(article) {
   const key = (article || '').trim().toLowerCase();
   if (!key) return null;
-  const arRecipes = (coloristTwinRecipesCache || []).filter(r => (r.article || '').trim().toLowerCase() === key);
+  const arRecipes = (coloristTwinRecipesCache || []).filter(r => String(r.article || '').trim().toLowerCase() === key);
   if (!arRecipes.length) return null;
   const usesMetallic = arRecipes.some(r => (parseFloat(r.pearl) || 0) > 0 || (parseFloat(r.grandal) || 0) > 0);
   const pigCounts = arRecipes.map(r => COLORIST_TWIN_PIGMENT_KEYS.filter(k => (parseFloat(r[k]) || 0) > 0).length);
@@ -10818,7 +10818,7 @@ function autofillByArticle() {
   tx.objectStore(STORE_NAME).getAll().onsuccess = e => {
     const all = e.target.result || [];
     const matches = all
-      .filter(r => (r.article || '').trim().toLowerCase() === article.toLowerCase())
+      .filter(r => String(r.article || '').trim().toLowerCase() === article.toLowerCase())
       .sort((a, b) => b.id - a.id);
     articleHistoryCache = matches;
     articleHintExactMatch = !!matches.length;
@@ -19768,7 +19768,6 @@ function renderShiftTrafficLight() {
   const wrap = document.getElementById('shift-traffic-light');
   if (!wrap) return;
   if (!canSeeShiftTrafficLight()) { wrap.classList.add('hidden'); document.getElementById('shift-traffic-panel').classList.add('hidden'); return; }
-  wrap.classList.remove('hidden');
   const status = computeShiftTrafficLight();
   const colors = { green: '#16a34a', yellow: '#eab308', red: '#dc2626' };
   const dot = document.getElementById('shift-traffic-dot');
@@ -19776,6 +19775,16 @@ function renderShiftTrafficLight() {
   wrap.classList.toggle('shift-traffic-pulse', status.level === 'red');
   const body = document.getElementById('shift-traffic-panel-body');
   if (body) body.innerHTML = status.reasons.map(r => `<div>${escapeHtmlProd(r)}</div>`).join('');
+  // ИСПРАВЛЕНИЕ: раньше эта функция всегда снимала class="hidden" со
+  // светофора, даже если его специально спрятали на время открытого чата
+  // (см. hideShiftTrafficLightForModal_) — а вызывается она из фонового
+  // опроса каждые ~10 секунд (см. вызов renderShiftTrafficLight() в цикле
+  // синхронизации). В итоге через несколько секунд после открытия чата
+  // светофор сам снова появлялся поверх поля ввода сообщения на телефоне.
+  // Теперь, пока он намеренно спрятан модалкой чата, опрос обновляет только
+  // цвет/данные внутри, но не показывает светофор обратно.
+  if (wrap.dataset.hiddenByModal) return;
+  wrap.classList.remove('hidden');
 }
 
 function toggleShiftTrafficPanel() {
@@ -22307,7 +22316,7 @@ async function handleOrdersExcelImport(evt, statusElId) {
     // Ключ для защиты от повторного добавления одного и того же заказа при
     // повторном импорте файла в течение дня (задание может меняться
     // несколько раз за смену) — сравниваем по линии+артикулу+количеству.
-    const existingKeys = new Set(productionOrders.map(o => `${(o.line || '').trim()}|${(o.article || '').trim()}|${o.qty}`));
+    const existingKeys = new Set(productionOrders.map(o => `${String(o.line || '').trim()}|${String(o.article || '').trim()}|${o.qty}`));
     const orderIdsBeforeImport = new Set(productionOrders.map(o => o.id));
 
     const multiBlockOrders = parseMultiBlockOrdersSheet(sheet);
@@ -23145,7 +23154,7 @@ async function renderMaterialAlertsBody_(el) {
     pairs.forEach(({ pigment, lot }) => {
       const key = pigment + '||' + lot;
       if (!groups[key]) groups[key] = { pigment, lot, entries: [] };
-      groups[key].entries.push({ article: (r.article || '').trim(), dA: r.dA || 0, dB: r.dB || 0 });
+      groups[key].entries.push({ article: String(r.article || '').trim(), dA: r.dA || 0, dB: r.dB || 0 });
     });
   });
 
@@ -23211,7 +23220,7 @@ function renderStatsView() {
     const in30 = all.filter(r => { const t = parseRuDate(r.date); return t && (now - t) <= 30 * DAY; });
 
     const byMaster = {};
-    all.forEach(r => { const k = (r.master || '').trim() || 'Без указания'; if (!byMaster[k]) byMaster[k] = { count: 0, deSum: 0, deCount: 0 }; byMaster[k].count++; if (typeof r.dE === 'number') { byMaster[k].deSum += r.dE; byMaster[k].deCount++; } });
+    all.forEach(r => { const k = String(r.master || '').trim() || 'Без указания'; if (!byMaster[k]) byMaster[k] = { count: 0, deSum: 0, deCount: 0 }; byMaster[k].count++; if (typeof r.dE === 'number') { byMaster[k].deSum += r.dE; byMaster[k].deCount++; } });
     const masterRows = Object.entries(byMaster).sort((a, b) => b[1].count - a[1].count).slice(0, 8);
 
     // Средняя ΔE по основе — какая основа чаще всего "недобирает" точность
@@ -23222,7 +23231,7 @@ function renderStatsView() {
     const baseRows = Object.entries(byBase).map(([k, v]) => [BASE_LABELS[k] || k, v.deSum / v.deCount, v.deCount]).sort((a, b) => b[1] - a[1]);
 
     const byArticle = {};
-    all.forEach(r => { const k = (r.article || '').trim(); if (k) byArticle[k] = (byArticle[k] || 0) + 1; });
+    all.forEach(r => { const k = String(r.article || '').trim(); if (k) byArticle[k] = (byArticle[k] || 0) + 1; });
     const articleRows = Object.entries(byArticle).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
     // ===== Статистика ПО КОММЕНТАРИЯМ =====
@@ -23230,11 +23239,11 @@ function renderStatsView() {
     // замечание по техкарте, пасте, шаблону, разнотону или результату замеса.
     // Считаем только непустые комментарии, не меняя общие показатели рецептов.
     const commentRecords = all
-      .filter(r => String(r.comment || '').trim())
+      .filter(r => StringString(r.comment || '').trim())
       .sort((a, b) => (b.id || 0) - (a.id || 0));
     const commentByArticle = {};
     commentRecords.forEach(r => {
-      const article = (r.article || '').trim() || 'Без артикула';
+      const article = String(r.article || '').trim() || 'Без артикула';
       if (!commentByArticle[article]) commentByArticle[article] = { article, count: 0, latest: r };
       commentByArticle[article].count++;
       if ((r.id || 0) > (commentByArticle[article].latest.id || 0)) commentByArticle[article].latest = r;
@@ -23291,7 +23300,7 @@ function renderStatsView() {
 
     // Самые часто повторяемые названия цвета (поле "name" при сохранении рецепта)
     const byColorName = {};
-    all.forEach(r => { const k = (r.name || '').trim(); if (k && k !== 'Без названия') byColorName[k] = (byColorName[k] || 0) + 1; });
+    all.forEach(r => { const k = String(r.name || '').trim(); if (k && k !== 'Без названия') byColorName[k] = (byColorName[k] || 0) + 1; });
     const colorNameRows = Object.entries(byColorName).filter(([, c]) => c > 1).sort((a, b) => b[1] - a[1]).slice(0, 6);
 
     // ===== Статистика ПО КОЛОРИРОВАНИЮ =====
@@ -23351,7 +23360,7 @@ function renderStatsView() {
           ${commentArticleRows.length > 8 ? `<div class="text-[9px] text-gray-400 mt-2">Показаны 8 из ${commentArticleRows.length} групп по артикулам.</div>` : ''}
           <div class="text-[9px] font-black uppercase tracking-wide text-gray-400 mt-4 mb-1.5">Последние комментарии</div>
           <div class="space-y-2">
-            ${recentCommentRows.map(r => `<div class="rounded-xl bg-gray-50 border border-gray-100 px-3 py-2"><div class="flex items-center justify-between gap-2 mb-1"><span class="text-[9px] font-black text-blue-700 truncate">Арт. ${escapeHtmlProd((r.article || '').trim() || 'без артикула')}</span><span class="text-[8px] text-gray-400 shrink-0">${escapeHtmlProd(r.date || '')}</span></div><div class="text-[10px] text-gray-600 leading-relaxed whitespace-pre-wrap">${escapeHtmlProd(String(r.comment || '').trim())}</div>${r.master ? `<div class="text-[8px] text-gray-400 mt-1">Мастер: ${escapeHtmlProd(r.master)}</div>` : ''}</div>`).join('')}
+            ${recentCommentRows.map(r => `<div class="rounded-xl bg-gray-50 border border-gray-100 px-3 py-2"><div class="flex items-center justify-between gap-2 mb-1"><span class="text-[9px] font-black text-blue-700 truncate">Арт. ${escapeHtmlProd(String(r.article || '').trim() || 'без артикула')}</span><span class="text-[8px] text-gray-400 shrink-0">${escapeHtmlProd(r.date || '')}</span></div><div class="text-[10px] text-gray-600 leading-relaxed whitespace-pre-wrap">${escapeHtmlProd(StringString(r.comment || '').trim())}</div>${r.master ? `<div class="text-[8px] text-gray-400 mt-1">Мастер: ${escapeHtmlProd(r.master)}</div>` : ''}</div>`).join('')}
           </div>
           ${commentRecords.length > recentCommentRows.length ? `<div class="text-[9px] text-gray-400 mt-2">Показаны последние ${recentCommentRows.length} комментариев из ${commentRecords.length}.</div>` : ''}
         ` : '<p class="text-gray-400 text-xs">Пока нет комментариев к сохранённым рецептам.</p>'}
@@ -23418,7 +23427,7 @@ function renderArticleDEHistoryOptions() {
   if (!block || !sel) return;
   const byArticle = {};
   statsRecipesCache.forEach(r => {
-    const k = (r.article || '').trim();
+    const k = String(r.article || '').trim();
     if (k && typeof r.dE === 'number') byArticle[k] = (byArticle[k] || 0) + 1;
   });
   const articles = Object.entries(byArticle).filter(([, c]) => c >= 2).sort((a, b) => b[1] - a[1]).map(([a]) => a);
@@ -23432,7 +23441,7 @@ function renderArticleDEHistoryChart(article) {
   if (!el) return;
   const parseRuDate = d => { const m = (d || '').match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/); return m ? new Date(+m[3], +m[2] - 1, +m[1]).getTime() : null; };
   const rows = statsRecipesCache
-    .filter(r => (r.article || '').trim() === article && typeof r.dE === 'number')
+    .filter(r => String(r.article || '').trim() === article && typeof r.dE === 'number')
     .map(r => ({ t: parseRuDate(r.date), dE: r.dE, date: r.date }))
     .filter(r => r.t !== null)
     .sort((a, b) => a.t - b.t);
@@ -24260,7 +24269,7 @@ async function renderMasterTwinTab() {
   const contentEl = document.getElementById('master-twin-content');
   if (!selectEl || !contentEl) return;
   const all = await getAllLocalRecipes();
-  const masters = Array.from(new Set(all.map(r => (r.master || '').trim()).filter(Boolean))).sort();
+  const masters = Array.from(new Set(all.map(r => String(r.master || '').trim()).filter(Boolean))).sort();
   if (!masters.length) {
     selectEl.innerHTML = '<option value="">— пока нет данных —</option>';
     contentEl.innerHTML = '<p class="text-gray-400 text-center py-8 text-sm">Ни один рецепт не сохранён с указанием имени мастера — впишите имя в поле «Мастер» при сохранении, и здесь появится профиль его стиля.</p>';
@@ -24280,7 +24289,7 @@ function renderMasterTwinProfile(master, all) {
   const contentEl = document.getElementById('master-twin-content');
   if (!contentEl) return;
   if (!master) { contentEl.innerHTML = ''; return; }
-  const mine = all.filter(r => (r.master || '').trim() === master);
+  const mine = all.filter(r => String(r.master || '').trim() === master);
   if (!mine.length) { contentEl.innerHTML = '<p class="text-gray-400 text-center py-6 text-sm">Нет рецептов этого мастера</p>'; return; }
 
   const withDE = mine.filter(r => typeof r.dE === 'number');
@@ -24327,7 +24336,7 @@ function renderMasterTwinProfile(master, all) {
   const avgSteps = stepsCounts.length ? (stepsCounts.reduce((s, v) => s + v, 0) / stepsCounts.length) : null;
 
   const byArticle = {};
-  mine.forEach(r => { const k = (r.article || '').trim(); if (!k) return; if (!byArticle[k]) byArticle[k] = []; byArticle[k].push(r); });
+  mine.forEach(r => { const k = String(r.article || '').trim(); if (!k) return; if (!byArticle[k]) byArticle[k] = []; byArticle[k].push(r); });
   const topArticles = Object.entries(byArticle).sort((a, b) => b[1].length - a[1].length).slice(0, 3)
     .map(([, recs]) => recs.slice().sort((a, b) => (a.dE ?? 99) - (b.dE ?? 99))[0]);
   lastMasterTwinArticleRecipes = topArticles;
@@ -24380,7 +24389,7 @@ async function renderErrorAnalysisTab() {
   if (!selectEl || !contentEl) return;
   const all = await getAllLocalRecipes();
   const byArticle = {};
-  all.forEach(r => { const k = (r.article || '').trim(); if (!k || typeof r.dE !== 'number') return; if (!byArticle[k]) byArticle[k] = []; byArticle[k].push(r); });
+  all.forEach(r => { const k = String(r.article || '').trim(); if (!k || typeof r.dE !== 'number') return; if (!byArticle[k]) byArticle[k] = []; byArticle[k].push(r); });
   const articles = Object.keys(byArticle).filter(a => byArticle[a].length >= 2).sort((a, b) => byArticle[b].length - byArticle[a].length);
   if (!articles.length) {
     selectEl.innerHTML = '<option value="">— пока нет данных —</option>';
@@ -24396,7 +24405,7 @@ async function renderErrorAnalysisTab() {
 function errorAnalysisChanged() {
   getAllLocalRecipes().then(all => {
     const article = document.getElementById('error-analysis-select').value;
-    const list = all.filter(r => (r.article || '').trim() === article && typeof r.dE === 'number');
+    const list = all.filter(r => String(r.article || '').trim() === article && typeof r.dE === 'number');
     renderErrorAnalysisArticle(article, list);
   });
 }
@@ -24507,7 +24516,7 @@ async function generateAutoScenarios() {
   const all = await getAllLocalRecipes();
   const byArticle = {};
   all.forEach(r => {
-    const k = (r.article || '').trim();
+    const k = String(r.article || '').trim();
     if (!k || typeof r.dE !== 'number') return;
     (byArticle[k] = byArticle[k] || []).push(r);
   });
@@ -25007,7 +25016,7 @@ function printTraineeCertificate() {
   const typedName = (nameInput && nameInput.value || '').trim();
   const name = typedName || localStorage.getItem(TRAINEE_NAME_KEY) || '';
   if (!name) { toast('Впишите имя ученика или сначала пройдите хотя бы одну попытку.'); return; }
-  const scores = getTraineeScores().filter(s => (s.name || '').trim().toLowerCase() === name.toLowerCase());
+  const scores = getTraineeScores().filter(s => String(s.name || '').trim().toLowerCase() === name.toLowerCase());
   if (!scores.length) { toast(`Для «${name}» пока нет завершённых попыток — справку показывать не по чему.`); return; }
   const rounds = scores.length;
   const avgAttempts = (scores.reduce((sum, s) => sum + s.attempts, 0) / rounds).toFixed(1);
@@ -25626,7 +25635,7 @@ async function saveRecipe() {
   if (article && db) {
     const all = await getAllLocalRecipes();
     const existing = all
-      .filter(r => (r.article || '').trim().toLowerCase() === article.toLowerCase())
+      .filter(r => String(r.article || '').trim().toLowerCase() === article.toLowerCase())
       .sort((a, b) => (b.id || 0) - (a.id || 0))[0];
     if (existing) {
       pendingDuplicateExisting = existing;
