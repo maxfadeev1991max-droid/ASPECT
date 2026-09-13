@@ -1393,6 +1393,13 @@
              вашу базу и пигменты. См. блок кода рядом с loadPrecedentCases(). -->
         <div id="learning-panel" class="bg-white/5 rounded-2xl p-3 border border-blue-500/20 space-y-1.5"></div>
 
+        <!-- Федеративное обучение цеха: не заменяет "Обучение на ваших
+             данных" выше, а дополняет его сигналом со ВСЕХ телефонов цеха —
+             см. computeLearnedPigmentMultiplier/applyIncomingFederatedModel.
+             Между устройствами ходят только агрегированные числа, ни фото,
+             ни рецепты, ни имена. -->
+        <div id="federated-learning-panel" class="bg-white/5 rounded-2xl p-3 border border-cyan-500/20 space-y-1.5"></div>
+
         <!-- Neuro-Symbolic Hybrid: в отличие от "Обучения на ваших данных" выше
              (чисто статистический слой — множитель по накопленной истории
              коррекций, без понимания ПОЧЕМУ), здесь тот же статистический
@@ -4597,7 +4604,13 @@ async function fetchCloudSnapshotRaw_() {
     // (используется в syncFromSheetDb и startLiveColorSessionPolling) было
     // всегда undefined, и живые сессии колориста (фото/точки/ΔE до
     // сохранения рецепта) физически не долетали до других устройств.
-    liveColorSessions: Array.isArray(data.liveColorSessions) ? data.liveColorSessions : []
+    liveColorSessions: Array.isArray(data.liveColorSessions) ? data.liveColorSessions : [],
+    // Федеративное обучение цеха (см. блок кода рядом с pushFederatedUpdateToCloud):
+    // словарь по анонимному id устройства -> лёгкий агрегат цветовой модели и
+    // модели брака ЭТОГО телефона. Без этого поля здесь клиент получал бы
+    // сервер-версию поля и тут же терял её при перестроении объекта, как уже
+    // однажды случилось с liveColorSessions/shiftTasks (см. комментарии выше).
+    federatedLearning: (data.federatedLearning && typeof data.federatedLearning === 'object') ? data.federatedLearning : {}
   };
 }
 
@@ -4781,6 +4794,97 @@ async function checkLineTwinBeforeLaunch() {
   }
 }
 
+// ===== On-device Computer Vision: похожесть по фото + корреляции =====
+// ВАЖНО, честно про границы этой фичи: это НЕ обученный классификатор видов
+// брака ("полосы"/"непропечатка"/"конденсат" и т.д.) — для обучения такой
+// модели нужен размеченный датасет фото по каждому виду дефекта, а его пока
+// нет вообще (до этой фичи фото к «Быстрым отметкам» не прикладывались).
+// Вместо этого используется стандартный приём transfer learning: предобученная
+// MobileNet (обучена на миллионах обычных фото, к браку отношения не имеющих)
+// используется только как ЭКСТРАКТОР ПРИЗНАКОВ ("embedding") — сжатое числовое
+// описание того, что на фото. Два похожих по общему виду фото (например, два
+// случая полос) дают близкие embedding'и, и дальше это просто поиск "на что из
+// уже отмеченных случаев это похоже больше всего" (косинусное сходство), а не
+// распознавание конкретного вида дефекта с нуля.
+// Как это становится настоящим датасетом со временем: каждое фото,
+// приложенное к «Быстрой отметке» (см. logQuickEvent), сохраняет photoUrl и
+// embedding в лист QuickEvents (Code.gs, getQuickEventsHistory_). Категория
+// дефекта уже проставлена печатником в момент отметки — то есть накапливается
+// РАЗМЕЧЕННЫЙ датасет без какой-либо дополнительной работы. Когда его наберётся
+// достаточно, эти фото можно будет использовать для дообучения настоящего
+// классификатора (см. вкладку «Обучение»).
+// Всё считается целиком в браузере: сами фото на сторонний сервер для анализа
+// не уходят (только на уже используемый Google Диск через тот же механизм,
+// что и фото Эталон/Замес). Библиотеки грузятся ЛЕНИВО, только по факту первого
+// прикреплённого фото — обычный запуск приложения их не трогает вообще, поэтому
+// ни скорость загрузки, ни работа остального приложения не страдают, даже если
+// CDN недоступен в сети цеха (тогда просто не будет подсказки "похоже на...",
+// сама отметка и остальное приложение работают как прежде).
+let cvModelPromise_ = null;
+function loadCvModel_() {
+  if (cvModelPromise_) return cvModelPromise_;
+  cvModelPromise_ = (async () => {
+    if (typeof tf === 'undefined') {
+      await loadScriptOnce_('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js');
+    }
+    if (typeof mobilenet === 'undefined') {
+      await loadScriptOnce_('https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js');
+    }
+    // alpha 0.5 — облегчённая версия сети (меньше точность классификации по
+    // 1000 ImageNet-классам, которая нам не нужна, зато заметно быстрее на
+    // слабом телефоне в цеху); нам нужен только embedding, не сама классификация.
+    return await mobilenet.load({ version: 2, alpha: 0.5 });
+  })().catch(err => {
+    cvModelPromise_ = null; // не запоминаем провал — при следующем фото попробуем снова
+    console.warn('[cv] модель компьютерного зрения не загрузилась — подсказка "похоже на фото" будет недоступна, остальное приложение не затронуто', err);
+    return null;
+  });
+  return cvModelPromise_;
+}
+const loadedScripts_ = {};
+function loadScriptOnce_(src) {
+  if (loadedScripts_[src]) return loadedScripts_[src];
+  loadedScripts_[src] = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Не удалось загрузить ' + src));
+    document.head.appendChild(s);
+  });
+  return loadedScripts_[src];
+}
+// Считает embedding фото ЛОКАЛЬНО. Полный embedding MobileNet — 1000+ чисел;
+// хранить столько в ячейке Google Таблицы на каждую отметку избыточно —
+// сжимаем усреднением по блокам до 32 чисел (достаточно для грубой похожести).
+async function computeDefectEmbedding_(imgOrCanvas) {
+  const model = await loadCvModel_();
+  if (!model) return null;
+  try {
+    const activation = model.infer(imgOrCanvas, true); // true = embedding, а не финальная классификация по ImageNet
+    const raw = await activation.data();
+    activation.dispose();
+    const targetLen = 32;
+    const bucket = Math.ceil(raw.length / targetLen);
+    const compact = [];
+    for (let i = 0; i < raw.length; i += bucket) {
+      let sum = 0, n = 0;
+      for (let j = i; j < Math.min(i + bucket, raw.length); j++) { sum += raw[j]; n++; }
+      compact.push(Math.round((sum / n) * 1000) / 1000);
+    }
+    return compact;
+  } catch (err) {
+    console.warn('[cv] не удалось посчитать embedding фото', err);
+    return null;
+  }
+}
+function cosineSimilarity_(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || !a.length || a.length !== b.length) return 0;
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  if (!na || !nb) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
 // ===== Быстрые отметки брака/простоя/брак-рулонов — без камеры контроля
 // брака это единственный источник данных о качестве, поэтому важно, чтобы
 // отметка занимала секунды, а не пересчитывалась в уме в конце смены.
@@ -4855,6 +4959,15 @@ function renderQuickEventsPanelHTML_(suffix) {
         ${sectionOptions}
       </select>
     </div>
+    <!-- ДОБАВЛЕНО: необязательное фото к отметке — задел под on-device CV
+         (см. computeDefectEmbedding_ выше). Фото прикладывается к СЛЕДУЮЩЕЙ
+         нажатой ниже категории брака/простоя, а не отправляется отдельно. -->
+    <div class="flex items-center gap-2">
+      <button type="button" onclick="triggerQuickEventPhoto('${suffix}')" id="qe-photo-btn-${suffix}" class="shrink-0 text-[9px] font-black uppercase px-2.5 py-1.5 rounded-lg border border-gray-200 bg-gray-50 text-gray-600">📸 Фото (необязательно)</button>
+      <input type="file" id="qe-photo-input-${suffix}" accept="image/*" capture="environment" class="hidden" onchange="handleQuickEventPhoto(this, '${suffix}')">
+      <span id="qe-photo-status-${suffix}" class="text-[8px] text-gray-400 leading-tight"></span>
+    </div>
+    <div id="qe-similar-hint-${suffix}" class="space-y-1.5"></div>
     <div class="text-[8px] font-black uppercase text-red-400">Брак по качеству</div>
     <div class="grid grid-cols-3 gap-1.5">${defectButtons}</div>
     <div class="text-[8px] font-black uppercase text-amber-500">Причина простоя/наладки</div>
@@ -4864,6 +4977,124 @@ function renderQuickEventsPanelHTML_(suffix) {
     </button>
     <div id="qe-summary-${suffix}" class="pt-1 border-t border-gray-50"></div>
   </div>`;
+}
+
+// ---- Фото к «Быстрой отметке» + подсказки on-device CV (см. модуль выше) ----
+// pendingPhoto хранит фото/embedding МЕЖДУ выбором файла и нажатием на
+// категорию — сама категория (kind/category) в момент выбора фото ещё не
+// известна, поэтому embedding считается сразу (для превью "похоже на..."),
+// а фото реально грузится на Диск только при нажатии на конкретную кнопку.
+const qePendingPhoto_ = {};
+function triggerQuickEventPhoto(suffix) {
+  const input = document.getElementById('qe-photo-input-' + suffix);
+  if (input) input.click();
+}
+function handleQuickEventPhoto(inputEl, suffix) {
+  const file = inputEl.files && inputEl.files[0];
+  inputEl.value = '';
+  if (!file) return;
+  const statusEl = document.getElementById('qe-photo-status-' + suffix);
+  if (statusEl) statusEl.textContent = '⏳ обрабатываю фото...';
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = new Image();
+    img.onload = async () => {
+      // Уменьшаем фото — крупнее не нужно ни для показа брака на экране, ни
+      // для embedding, а на плохой связи в цеху экономит и время загрузки.
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      const max = 900;
+      if (w > h) { if (w > max) { h = h * max / w; w = max; } }
+      else { if (h > max) { w = w * max / h; h = max; } }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+      const embedding = await computeDefectEmbedding_(canvas);
+      qePendingPhoto_[suffix] = { dataUrl, embedding };
+      const btn = document.getElementById('qe-photo-btn-' + suffix);
+      if (btn) { btn.textContent = '📸 Фото ✓ (нажмите ещё раз, чтобы заменить)'; btn.classList.add('bg-emerald-50', 'border-emerald-300', 'text-emerald-700'); }
+      if (statusEl) statusEl.textContent = embedding ? 'Приложится к следующей нажатой категории ниже' : 'Приложится к отметке (без «похоже на» — зрение офлайн недоступно)';
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+function resetQuickEventPhoto_(suffix, keepHint) {
+  delete qePendingPhoto_[suffix];
+  const btn = document.getElementById('qe-photo-btn-' + suffix);
+  if (btn) { btn.textContent = '📸 Фото (необязательно)'; btn.classList.remove('bg-emerald-50', 'border-emerald-300', 'text-emerald-700'); }
+  const statusEl = document.getElementById('qe-photo-status-' + suffix);
+  if (statusEl) statusEl.textContent = '';
+  if (!keepHint) {
+    const hintEl = document.getElementById('qe-similar-hint-' + suffix);
+    if (hintEl) hintEl.innerHTML = '';
+  }
+}
+// Обычная статистика (не ИИ): сколько раз именно эта категория дефекта
+// отмечалась на именно этой линии, когда линия шла быстрее какого-то порога.
+// Показываем самую частую пару линия+порог, если совпадений достаточно,
+// чтобы не путать разовое совпадение с закономерностью.
+const QE_CORRELATION_MIN_SAMPLES = 3;
+const QE_SPEED_THRESHOLDS = [60, 70, 80, 85, 90, 100, 110];
+async function renderQuickEventCorrelationHint_(kind, category, line, suffix) {
+  const hintEl = document.getElementById('qe-similar-hint-' + suffix);
+  const cfg = sheetDbConfig || loadSheetDbConfig();
+  if (!hintEl || !cfg || !cfg.url) return;
+  hintEl.innerHTML = '';
+  try {
+    const query = { kind, category, maxRows: 500 };
+    const joiner = cfg.url.indexOf('?') >= 0 ? '&' : '?';
+    const url = cfg.url + joiner + 'action=getQuickEventsHistory&query=' + encodeURIComponent(JSON.stringify(query)) + '&t=' + Date.now();
+    const resp = await fetchCloudWithTimeout(url, {}, 10000);
+    if (!resp.ok) return;
+    const out = await resp.json();
+    if (!out || !out.ok || !Array.isArray(out.events) || out.events.length < QE_CORRELATION_MIN_SAMPLES) return;
+    const byLine = {};
+    out.events.forEach(ev => {
+      if (ev.speedAtEvent == null) return;
+      const lk = String(ev.line || '—');
+      (byLine[lk] = byLine[lk] || []).push(ev.speedAtEvent);
+    });
+    let best = null;
+    Object.keys(byLine).forEach(lk => {
+      const speeds = byLine[lk];
+      QE_SPEED_THRESHOLDS.forEach(thr => {
+        const count = speeds.filter(s => s > thr).length;
+        if (count >= QE_CORRELATION_MIN_SAMPLES && (!best || count > best.count)) {
+          best = { line: lk, threshold: thr, count, total: speeds.length };
+        }
+      });
+    });
+    if (best) {
+      hintEl.innerHTML = `<div class="text-[9px] font-bold text-fuchsia-700 bg-fuchsia-50 border border-fuchsia-100 rounded-lg px-2.5 py-2 leading-relaxed">🧠 Похоже на то, что уже было <b>${best.count} раз</b> на линии <b>${best.line}</b> при скорости выше <b>${best.threshold} м/мин</b> (по истории отметок «${quickCategoryLabel_(kind, category)}»).</div>`;
+    }
+  } catch (e) { /* необязательная подсказка — тихо пропускаем при любой ошибке сети */ }
+}
+// Косинусное сходство embedding'а нового фото с уже сохранёнными той же
+// категории. Порог 0.85 подобран эмпирически для сжатых до 32 чисел
+// embedding'ов — это грубая похожесть по общему виду фото, а не диагноз.
+async function showSimilarQuickEventsHint_(suffix, embedding, kind, category) {
+  const hintEl = document.getElementById('qe-similar-hint-' + suffix);
+  const cfg = sheetDbConfig || loadSheetDbConfig();
+  if (!hintEl || !embedding || !cfg || !cfg.url) return;
+  try {
+    const query = { kind: kind || '', category: category || '', maxRows: 300 };
+    const joiner = cfg.url.indexOf('?') >= 0 ? '&' : '?';
+    const url = cfg.url + joiner + 'action=getQuickEventsHistory&query=' + encodeURIComponent(JSON.stringify(query)) + '&t=' + Date.now();
+    const resp = await fetchCloudWithTimeout(url, {}, 10000);
+    if (!resp.ok) return;
+    const out = await resp.json();
+    if (!out || !out.ok || !Array.isArray(out.events)) return;
+    let best = null;
+    out.events.forEach(ev => {
+      if (!ev.embedding || !ev.embedding.length) return;
+      const sim = cosineSimilarity_(embedding, ev.embedding);
+      if (!best || sim > best.sim) best = { sim, ev };
+    });
+    if (best && best.sim > 0.85) {
+      hintEl.innerHTML += `<div class="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-2 leading-relaxed mt-1.5">👁 По фото похоже на отметку «${quickCategoryLabel_(best.ev.kind, best.ev.category)}» от ${new Date(best.ev.ts).toLocaleDateString('ru-RU')}${best.ev.line ? ', линия ' + best.ev.line : ''} — сходство ${Math.round(best.sim * 100)}%. Это грубая похожесть по фото, не диагноз.</div>`;
+    }
+  } catch (e) { /* необязательная подсказка — тихо пропускаем */ }
 }
 
 function initQuickEventsPanels() {
@@ -5007,6 +5238,12 @@ async function logQuickEvent(kind, category, suffix) {
   const line = (document.getElementById('qe-line-' + suffix) || {}).value || (currentUserProfile && currentUserProfile.line) || '';
   const article = (document.getElementById('qe-article-' + suffix) || {}).value || '';
   const section = (document.getElementById('qe-section-' + suffix) || {}).value || '';
+  // ДОБАВЛЕНО: скорость линии на момент отметки — берём из уже идущего
+  // забега этой линии («Линия поехала»), отдельно спрашивать не нужно.
+  // Используется только для подсказки-корреляции (см. renderQuickEventCorrelationHint_).
+  const activeRunForSpeed = line ? lineRuns.find(r => normalizeLineKey(r.line) === normalizeLineKey(line) && !r.endTs) : null;
+  const speedAtEvent = (activeRunForSpeed && typeof activeRunForSpeed.speedMPerMin === 'number' && activeRunForSpeed.speedMPerMin > 0) ? activeRunForSpeed.speedMPerMin : null;
+  const pendingPhoto = qePendingPhoto_[suffix] || null;
   const payload = {
     kind: kind,
     category: category,
@@ -5014,20 +5251,33 @@ async function logQuickEvent(kind, category, suffix) {
     line: line,
     article: article,
     who: (currentUserProfile && currentUserProfile.name) || '',
-    role: (currentUserProfile && currentUserProfile.role) || ''
+    role: (currentUserProfile && currentUserProfile.role) || '',
+    speedAtEvent: speedAtEvent,
+    embedding: (pendingPhoto && pendingPhoto.embedding) || null
   };
-  if (statusEl) statusEl.textContent = '⏳ отмечаю...';
+  if (statusEl) statusEl.textContent = pendingPhoto ? '⏳ загружаю фото и отмечаю...' : '⏳ отмечаю...';
   try {
+    // Фото грузим до отправки самой отметки, но не даём фото заблокировать
+    // её целиком: если фото не загрузилось (плохая связь), отметка всё равно
+    // уходит без photoUrl — ровно как и до этой фичи, ничего не ломается.
+    if (pendingPhoto) {
+      payload.photoUrl = await uploadPhotoAndGetUrl(pendingPhoto.dataUrl, 'qe_' + kind + '_' + category + '_' + Date.now() + '.jpg');
+    }
     await postToCloudWithRetry(cfg, { action: 'putQuickEvent', payload: payload });
     if (statusEl) {
       statusEl.textContent = '✅ отмечено';
       setTimeout(() => { if (statusEl.textContent === '✅ отмечено') statusEl.textContent = ''; }, 2500);
     }
     refreshQuickEventsSummary(suffix);
+    renderQuickEventCorrelationHint_(kind, category, line, suffix).then(() => {
+      if (pendingPhoto && pendingPhoto.embedding) showSimilarQuickEventsHint_(suffix, pendingPhoto.embedding, kind, category);
+    });
+    resetQuickEventPhoto_(suffix, true);
   } catch (e) {
     // Не потеряно — ушло в оффлайн-очередь и дожмётся само, когда вернётся связь.
     qeQueuePayload_(payload);
     if (statusEl) statusEl.textContent = '💾 нет связи — сохранено, отправится само';
+    resetQuickEventPhoto_(suffix, true);
   }
 }
 
@@ -6103,6 +6353,7 @@ async function syncFromSheetDb(isManual) {
     if (typeof renderLiveColorSessions === 'function') renderLiveColorSessions(remote.liveColorSessions);
     applyIncomingChat(remote.chat, remote.chatReads);
     applyIncomingMultipliers(remote);
+    applyIncomingFederatedModel(remote);
     applyIncomingShiftCorrections(remote);
     applyIncomingShiftDefects(remote);
     // ВАЖНО (исправление бага "заявка колористу не приходит"): раньше этот
@@ -7185,8 +7436,21 @@ async function syncArrayToCloud(field, localArray) {
         // на сервере может отличаться порядком/чужими записями), а что
         // КАЖДАЯ наша локальная запись реально долетела и сохранилась —
         // по содержимому, а не по порядку полей в объекте.
+        // ИСПРАВЛЕНО: раньше remote[field] всегда приводился к массиву
+        // (Array.isArray(...) ? ... : []) ДО сравнения. Для полей-объектов
+        // (например resourceCounters — это { "1": {cliche:{...}}, ... }, а
+        // не массив) это давало [] вместо реального объекта, и
+        // deepEqualIgnoreKeyOrder([], объект) гарантированно возвращал
+        // false с самых первых строк (там сразу проверяется Array.isArray
+        // у обоих аргументов) — то есть подтверждение записи ПРИНЦИПИАЛЬНО
+        // не могло пройти, даже если данные реально сохранились на сервере.
+        // Отсюда и постоянный тост "Не удалось синхронизировать с облаком
+        // (resourceCounters)" без реальных проблем с сетью. Приведение к
+        // массиву нужно только для mergeById-ветки (там дальше идёт .some
+        // по элементам массива) — для остальных полей сравниваем
+        // remote[field] как есть, в исходном типе.
+        if (!mergeById) return deepEqualIgnoreKeyOrder(remote[field], mergedSnapshotValue);
         const arr = Array.isArray(remote[field]) ? remote[field] : [];
-        if (!mergeById) return deepEqualIgnoreKeyOrder(arr, mergedSnapshotValue);
         return localArray.every(la => arr.some(ra => ra && ra.id === la.id && deepEqualIgnoreKeyOrder(ra, la)));
       }
     );
@@ -9872,7 +10136,12 @@ function resolveCorrectionAttempts(recipe) {
       tx.objectStore(LEARNING_STORE).put(a);
     }
   });
-  if (changed) renderLearningPanel();
+  if (changed) {
+    renderLearningPanel();
+    // Новый разрешённый случай меняет локальный агрегат по этой паре
+    // основа+пигмент — стоит поделиться свежей цифрой с цехом.
+    if (typeof pushFederatedUpdateToCloud === 'function') pushFederatedUpdateToCloud();
+  }
 }
 
 // Считает автоматический множитель к предлагаемому % дозировки пигмента на
@@ -9881,6 +10150,22 @@ function resolveCorrectionAttempts(recipe) {
 // т.е. ×1). caution:true означает "магнитуду лучше не трогать" — коррекция
 // систематически не даёт эффекта или уходит не в ту сторону, это, скорее,
 // повод присмотреться вручную, а не повод слепо увеличивать дозу.
+// ФЕДЕРАТИВНОЕ ОБУЧЕНИЕ (см. блок кода "Федеративное обучение цеха" ниже,
+// рядом с resetLearningData): если своих случаев на этой паре основа+пигмент
+// мало или недостаточно, но по ВСЕМУ цеху (минимум 2 разных телефона —
+// иначе это чужой личный опыт, а не консенсус) их накопилось достаточно,
+// используем это как замену/добавку к "недостаточно данных". Если своих
+// случаев достаточно — свой опыт всё равно остаётся основным (весит
+// FED_BLEND_WEIGHT федеративных случаев на 1 свой), федеративный сигнал
+// только подмешивается, а не подменяет.
+function computeMultiplierFromRatio_(avgRatio, count, successCount, federatedOnly, deviceCount) {
+  const meta = { count, avgRatio, successCount, federatedOnly: !!federatedOnly, deviceCount: deviceCount || 0 };
+  if (avgRatio <= 0.05) return { multiplier: 1, caution: true, ...meta };
+  if (avgRatio >= 0.75 && avgRatio <= 1.3) return { multiplier: 1, caution: false, ...meta };
+  const step = Math.max(-LEARNING_MAX_STEP, Math.min(LEARNING_MAX_STEP, 1 / avgRatio - 1));
+  const multiplier = Math.round((1 + step) * 100) / 100;
+  return { multiplier, caution: false, ...meta };
+}
 function computeLearnedPigmentMultiplier(pigmentKey, baseKey) {
   const axis = PIGMENT_AXIS[pigmentKey];
   if (!axis || !isLearningEnabled()) return null;
@@ -9890,7 +10175,13 @@ function computeLearnedPigmentMultiplier(pigmentKey, baseKey) {
     Math.abs(a[axis + 'Before']) > 0.5 &&
     a.pigments.some(p => p.key === pigmentKey)
   );
-  if (relevant.length < LEARNING_MIN_SAMPLES) return null;
+  const fedKey = baseKey + '::' + pigmentKey;
+  const fed = (typeof isFedLearningEnabled === 'function' && isFedLearningEnabled() && federatedColorModel) ? federatedColorModel[fedKey] : null;
+  const fedUsable = !!(fed && fed.count >= LEARNING_MIN_SAMPLES && fed.deviceCount >= 2);
+  if (relevant.length < LEARNING_MIN_SAMPLES) {
+    if (fedUsable) return computeMultiplierFromRatio_(fed.avgRatio, fed.count, fed.successCount, true, fed.deviceCount);
+    return null;
+  }
   const recent = relevant.slice().sort((x, y) => y.ts - x.ts).slice(0, 25);
   // ratio = какая доля исходного отклонения по нужной оси была закрыта этой
   // попыткой: 1 = отклонение полностью исчезло, 0 = коррекция не подействовала,
@@ -9903,15 +10194,12 @@ function computeLearnedPigmentMultiplier(pigmentKey, baseKey) {
   });
   const avgRatio = ratios.reduce((s, r) => s + r, 0) / ratios.length;
   const successCount = recent.filter(a => a.success).length;
-  if (avgRatio <= 0.05) {
-    return { multiplier: 1, count: recent.length, avgRatio, successCount, caution: true };
+  let blendedRatio = avgRatio;
+  if (fedUsable) {
+    const fedWeight = fed.count * FED_BLEND_WEIGHT;
+    blendedRatio = (avgRatio * recent.length + fed.avgRatio * fedWeight) / (recent.length + fedWeight);
   }
-  if (avgRatio >= 0.75 && avgRatio <= 1.3) {
-    return { multiplier: 1, count: recent.length, avgRatio, successCount, caution: false };
-  }
-  const step = Math.max(-LEARNING_MAX_STEP, Math.min(LEARNING_MAX_STEP, 1 / avgRatio - 1));
-  const multiplier = Math.round((1 + step) * 100) / 100;
-  return { multiplier, count: recent.length, avgRatio, successCount, caution: false };
+  return computeMultiplierFromRatio_(blendedRatio, recent.length, successCount, false, fedUsable ? fed.deviceCount : 0);
 }
 
 // Панель "Обучение на ваших данных" в форме колориста — счётчик успех/неуспех
@@ -9925,24 +10213,38 @@ function renderLearningPanel() {
     return;
   }
   const resolved = correctionAttempts.filter(a => a.resolved && !a.skipped);
+  const baseKey = currentBaseKey();
+  const label = BASE_LABELS[baseKey] || baseKey;
+  // Даже без единой СВОЕЙ завершённой коррекции подсказка может прийти из
+  // федеративной модели цеха (см. computeLearnedPigmentMultiplier) — поэтому
+  // здесь больше нет раннего "нет данных, значит нечего показывать".
   if (!resolved.length) {
+    const fedNotes = Object.keys(PIGMENT_AXIS)
+      .filter(k => isPigmentInRecipe(k))
+      .map(k => {
+        const l = computeLearnedPigmentMultiplier(k, baseKey);
+        if (!l || !l.federatedOnly || l.multiplier === 1) return '';
+        const dir = l.multiplier > 1 ? 'увеличить' : 'уменьшить';
+        return `<div class="text-[8px] text-cyan-600 leading-relaxed">🤝 ${PIGMENT_LABELS[k]}: своих случаев на «${label}» ещё нет, но по опыту цеха (${l.count} случаев, ${l.deviceCount} телефона(ов)) стоит ${dir} рекомендуемый % ×${l.multiplier}.</div>`;
+      }).filter(Boolean).join('');
     el.innerHTML = `<div class="text-[9px] text-gray-400 px-1 leading-relaxed">🧠 Обучение на ваших данных: пока нет ни одной завершённой коррекции. Как только примените подсказку и сохраните следующий замер того же артикула — приложение начнёт учиться и станет точнее именно под вашу базу и пигменты.</div>
+    ${fedNotes ? '<div class="space-y-1 mt-1">' + fedNotes + '</div>' : ''}
     <div class="text-[8px] text-gray-500 px-1 mt-1 cursor-pointer underline" onclick="toggleLearningEnabled()">Выключить автообучение</div>`;
     return;
   }
   const success = resolved.filter(a => a.success).length;
   const rate = Math.round(success / resolved.length * 100);
-  const baseKey = currentBaseKey();
-  const label = BASE_LABELS[baseKey] || baseKey;
   const notes = Object.keys(PIGMENT_AXIS)
     .filter(k => isPigmentInRecipe(k))
     .map(k => {
       const l = computeLearnedPigmentMultiplier(k, baseKey);
       if (!l) return '';
-      if (l.caution) return `<div class="text-[8px] text-amber-600 leading-relaxed">⚠️ ${PIGMENT_LABELS[k]}: по ${l.count} случаям на «${label}» коррекция часто не даёт ожидаемого эффекта — стоит присмотреться к направлению правки вручную, не только полагаться на подсказку.</div>`;
-      if (l.multiplier === 1) return `<div class="text-[8px] text-gray-400">✅ ${PIGMENT_LABELS[k]}: по ${l.count} случаям на «${label}» подсказки точны, поправка не нужна.</div>`;
+      const fedSuffix = (!l.federatedOnly && l.deviceCount > 0) ? ` <span class="text-cyan-500">(+ опыт цеха, ${l.deviceCount} тел.)</span>` : '';
+      if (l.federatedOnly) return `<div class="text-[8px] text-cyan-600 leading-relaxed">🤝 ${PIGMENT_LABELS[k]}: своих случаев на «${label}» ещё мало, подсказка — по опыту цеха (${l.count} случаев, ${l.deviceCount} тел.).</div>`;
+      if (l.caution) return `<div class="text-[8px] text-amber-600 leading-relaxed">⚠️ ${PIGMENT_LABELS[k]}: по ${l.count} случаям на «${label}» коррекция часто не даёт ожидаемого эффекта — стоит присмотреться к направлению правки вручную, не только полагаться на подсказку.${fedSuffix}</div>`;
+      if (l.multiplier === 1) return `<div class="text-[8px] text-gray-400">✅ ${PIGMENT_LABELS[k]}: по ${l.count} случаям на «${label}» подсказки точны, поправка не нужна.${fedSuffix}</div>`;
       const dir = l.multiplier > 1 ? 'увеличило' : 'уменьшило';
-      return `<div class="text-[8px] text-blue-600">🧠 ${PIGMENT_LABELS[k]}: по ${l.count} случаям автообучение ${dir} рекомендуемый % ×${l.multiplier} для «${label}».</div>`;
+      return `<div class="text-[8px] text-blue-600">🧠 ${PIGMENT_LABELS[k]}: по ${l.count} случаям автообучение ${dir} рекомендуемый % ×${l.multiplier} для «${label}».${fedSuffix}</div>`;
     }).filter(Boolean).join('');
   el.innerHTML = `
     <div class="flex justify-between items-center">
@@ -9965,6 +10267,262 @@ function resetLearningData() {
   }
   renderLearningPanel();
   toast('Обучение сброшено — накопление начнётся заново');
+}
+
+// ===== Федеративное обучение цеха =====
+// Идея: "Обучение на ваших данных" выше (computeLearnedPigmentMultiplier) —
+// это ЛОКАЛЬНАЯ модель, она видит только то, что произошло на ЭТОМ
+// телефоне. У нового колориста или на новой основе своих случаев мало, и
+// подсказка молчит (return null), пока не накопится LEARNING_MIN_SAMPLES.
+// Федеративное обучение решает это не отправкой сырых данных в общее
+// облако (журнал коррекций и фото брака остаются в IndexedDB устройства,
+// как и раньше), а обменом уже посчитанными агрегатами: "на этой основе с
+// этим пигментом среднее закрытие отклонения — X, случаев — N" и,
+// отдельно, "на такой-то чувствительности детектора брака ложных
+// срабатываний — Y%". Это ровно то же самое, что делает пигментный
+// множитель (pushMultipliersToCloud) с калибровочными коэффициентами —
+// только там колорист присылает ЧИСЛО, которое сам ввёл руками, а здесь
+// телефон сам присылает число, которое сам посчитал по своей истории.
+//
+// Что уходит в общую базу: { avgRatio, count, successCount } по паре
+// (основа, пигмент) и { sensitivity, count, falseRate } по детектору брака.
+// Что НЕ уходит никогда: фото, артикулы, рецепты, имена колористов/
+// печатников — идентификатор устройства случайный (getFedDeviceId), не
+// связан с логином. Каждое устройство пишет только в свой ключ словаря
+// federatedLearning, поэтому конфликтов записи между телефонами нет (см.
+// mergeObjects_ в Code.gs) — то же, чем уже защищены shiftDefects/
+// shiftCorrections.
+// Смешивание с локальной моделью — стандартный приём federated averaging
+// (взвешивание по числу случаев) + личная донастройка: свой опыт весит
+// больше федеративного (FED_BLEND_WEIGHT), а не подменяется им, и
+// федеративная статистика вообще не учитывается, если по ней меньше
+// LEARNING_MIN_SAMPLES случаев или их прислал только один телефон (один
+// чужой телефон — это чей-то личный опыт, а не консенсус цеха).
+const FED_DEVICE_ID_KEY = 'colorist_fed_device_id';
+const FED_LEARNING_ENABLED_KEY = 'colorist_fed_learning_enabled';
+const FED_MODEL_CACHE_KEY = 'colorist_fed_model_cache';
+const VISION_SENSITIVITY_KEY = 'colorist_vision_sensitivity';
+const FED_BLEND_WEIGHT = 0.5; // вес одного федеративного случая относительно одного своего
+const FED_MAX_AGE_MS = 45 * 24 * 60 * 60 * 1000; // телефон дольше не выходил на связь — не учитываем его вклад в консенсус
+
+function getFedDeviceId() {
+  let id = null;
+  try { id = localStorage.getItem(FED_DEVICE_ID_KEY); } catch (e) {}
+  if (!id) {
+    id = 'dev-' + ((window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)));
+    try { localStorage.setItem(FED_DEVICE_ID_KEY, id); } catch (e) {}
+  }
+  return id;
+}
+function isFedLearningEnabled() {
+  try { return localStorage.getItem(FED_LEARNING_ENABLED_KEY) !== 'off'; } catch (e) { return true; }
+}
+function setFedLearningEnabled(on) {
+  try { localStorage.setItem(FED_LEARNING_ENABLED_KEY, on ? 'on' : 'off'); } catch (e) {}
+}
+function toggleFedLearningEnabled() {
+  setFedLearningEnabled(!isFedLearningEnabled());
+  toast(isFedLearningEnabled()
+    ? '🤝 Обмен опытом с цехом включён'
+    : '🤝 Обмен опытом с цехом выключен — своё автообучение продолжит работать как раньше, но в общую базу больше ничего не уходит и подсказки цеха не подмешиваются');
+  renderFederatedLearningPanel();
+  renderLearningPanel();
+}
+
+let federatedColorModel = null; // { "base::pigment": {avgRatio,count,successCount,deviceCount} }
+let federatedDefectModel = null; // { sensitivity, falseRate, count, deviceCount }
+(function loadFederatedModelCache_() {
+  try {
+    const raw = localStorage.getItem(FED_MODEL_CACHE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    federatedColorModel = parsed.color || null;
+    federatedDefectModel = parsed.defect || null;
+  } catch (e) {}
+})();
+function saveFederatedModelCache_() {
+  try { localStorage.setItem(FED_MODEL_CACHE_KEY, JSON.stringify({ color: federatedColorModel, defect: federatedDefectModel })); } catch (e) {}
+}
+function loadVisionSensitivity() {
+  let saved = null;
+  try { saved = localStorage.getItem(VISION_SENSITIVITY_KEY); } catch (e) {}
+  if (saved !== null) visionSensitivity = parseInt(saved, 10) || visionSensitivity;
+  const slider = document.getElementById('vision-sensitivity');
+  const val = document.getElementById('vision-sensitivity-val');
+  if (slider) slider.value = visionSensitivity;
+  if (val) val.textContent = visionSensitivity;
+}
+
+// То же самое "было→стало" по журналу обучения, что и в
+// computeLearnedPigmentMultiplier, но БЕЗ гейта на isLearningEnabled() (свой
+// вклад в общую модель цеха можно отправить, даже если ЛОКАЛЬНОЕ
+// автообучение на этом телефоне выключено — переключатели разные) и без
+// ограничения шага множителя: наружу уходит "сырое" среднее отклонение,
+// финальное сглаживание шага каждое устройство делает само при ПРИМЕНЕНИИ
+// федеративной модели к себе (см. computeLearnedPigmentMultiplier).
+function computeLocalAxisStats_(pigmentKey, baseKey) {
+  const axis = PIGMENT_AXIS[pigmentKey];
+  if (!axis) return null;
+  const relevant = correctionAttempts.filter(a =>
+    a.resolved && !a.skipped && a.base === baseKey &&
+    typeof a[axis + 'Before'] === 'number' && typeof a[axis + 'After'] === 'number' &&
+    Math.abs(a[axis + 'Before']) > 0.5 &&
+    a.pigments.some(p => p.key === pigmentKey)
+  );
+  if (relevant.length < LEARNING_MIN_SAMPLES) return null;
+  const recent = relevant.slice().sort((x, y) => y.ts - x.ts).slice(0, 25);
+  const ratios = recent.map(a => {
+    const before = a[axis + 'Before'], after = a[axis + 'After'];
+    const r = before > 0 ? (before - after) / before : (after - before) / (-before);
+    return Math.max(-1, Math.min(2.5, r));
+  });
+  const avgRatio = ratios.reduce((s, r) => s + r, 0) / ratios.length;
+  const successCount = recent.filter(a => a.success).length;
+  return { avgRatio, count: recent.length, successCount };
+}
+function buildLocalFederatedColorSummary_() {
+  const out = {};
+  Object.keys(PIGMENT_AXIS).forEach(pigmentKey => {
+    Object.keys(BASE_LABELS).forEach(baseKey => {
+      const s = computeLocalAxisStats_(pigmentKey, baseKey);
+      if (s) out[baseKey + '::' + pigmentKey] = s;
+    });
+  });
+  return out;
+}
+async function buildLocalFederatedDefectSummary_() {
+  if (typeof getAllVisionDefects !== 'function') return null;
+  const all = await getAllVisionDefects();
+  const sample = all.slice(0, VISION_SUGGESTION_SAMPLE);
+  if (sample.length < 8) return null;
+  const falseN = sample.filter(d => d.falsePositive).length;
+  return { sensitivity: visionSensitivity, count: sample.length, falseRate: Math.round((falseN / sample.length) * 1000) / 1000 };
+}
+
+// Отправляет СВОИ агрегаты в общую базу — только в свой ключ по
+// getFedDeviceId(), остальные телефоны этим не затрагиваются (см. комментарий
+// про mergeObjects_ выше). Дебаунс длиннее, чем у pushMultipliersToCloud
+// (5с вместо 600мс) — это фоновый обмен статистикой, а не действие
+// колориста, требующее мгновенного отклика.
+let fedPushTimer = null;
+function pushFederatedUpdateToCloud() {
+  if (!isFedLearningEnabled()) return;
+  const cfg = sheetDbConfig || loadSheetDbConfig();
+  if (!cfg || !cfg.url) return;
+  if (fedPushTimer) clearTimeout(fedPushTimer);
+  fedPushTimer = setTimeout(async () => {
+    try {
+      const color = buildLocalFederatedColorSummary_();
+      const defect = await buildLocalFederatedDefectSummary_();
+      if (!Object.keys(color).length && !defect) return; // самому пока нечем делиться с цехом
+      const remote = await fetchCloudSnapshot();
+      if (!remote) return;
+      const deviceId = getFedDeviceId();
+      const existing = (remote.federatedLearning && remote.federatedLearning[deviceId]) || {};
+      remote.federatedLearning = { ...(remote.federatedLearning || {}) };
+      remote.federatedLearning[deviceId] = {
+        updatedAt: Date.now(),
+        role: (currentUserProfile && currentUserProfile.role) || existing.role || null,
+        color: Object.keys(color).length ? color : (existing.color || {}),
+        defect: defect || existing.defect || null
+      };
+      await pushCloudSnapshot(remote);
+    } catch (e) { console.error('Федеративное обучение: не удалось отправить вклад в общую модель', e); }
+  }, 5000);
+}
+
+// Пересчитывает объединённую модель цеха при каждой обычной синхронизации
+// (см. вызов applyIncomingFederatedModel(remote) в syncFromSheetDb) —
+// FedAvg: взвешенное по количеству случаев среднее по всем телефонам,
+// которые выходили на связь не позже FED_MAX_AGE_MS назад.
+function applyIncomingFederatedModel(remote) {
+  if (!remote || !remote.federatedLearning) return;
+  const now = Date.now();
+  const devices = Object.keys(remote.federatedLearning)
+    .map(id => remote.federatedLearning[id])
+    .filter(d => d && d.updatedAt && (now - d.updatedAt) < FED_MAX_AGE_MS);
+
+  const colorAgg = {};
+  devices.forEach(d => {
+    if (!d.color) return;
+    Object.keys(d.color).forEach(key => {
+      const c = d.color[key];
+      if (!c || !c.count) return;
+      const bucket = colorAgg[key] || { sumRatioWeighted: 0, sumWeight: 0, count: 0, successCount: 0, deviceCount: 0 };
+      bucket.sumRatioWeighted += c.avgRatio * c.count;
+      bucket.sumWeight += c.count;
+      bucket.count += c.count;
+      bucket.successCount += (c.successCount || 0);
+      bucket.deviceCount += 1;
+      colorAgg[key] = bucket;
+    });
+  });
+  const colorModel = {};
+  Object.keys(colorAgg).forEach(key => {
+    const b = colorAgg[key];
+    if (!b.sumWeight) return;
+    colorModel[key] = { avgRatio: b.sumRatioWeighted / b.sumWeight, count: b.count, successCount: b.successCount, deviceCount: b.deviceCount };
+  });
+  federatedColorModel = Object.keys(colorModel).length ? colorModel : null;
+
+  const defectDevices = devices.filter(d => d.defect && d.defect.count >= 8);
+  if (defectDevices.length) {
+    let sw = 0, ssens = 0, sfalse = 0;
+    defectDevices.forEach(d => { sw += d.defect.count; ssens += d.defect.sensitivity * d.defect.count; sfalse += d.defect.falseRate * d.defect.count; });
+    federatedDefectModel = { sensitivity: ssens / sw, falseRate: sfalse / sw, count: sw, deviceCount: defectDevices.length };
+  } else {
+    federatedDefectModel = null;
+  }
+  saveFederatedModelCache_();
+
+  // Холодный старт: на СОВСЕМ новом телефоне (ни разу не трогали ползунок
+  // чувствительности — см. VISION_SENSITIVITY_KEY) сразу подставляем
+  // значение, которое уже показало себя рабочим на других телефонах цеха,
+  // вместо зашитых по умолчанию 35. Если колорист/печатник УЖЕ подстроил
+  // чувствительность под свою камеру/освещение вручную — не трогаем её
+  // автоматически, это осознанная настройка конкретного места на линии.
+  if (federatedDefectModel && federatedDefectModel.deviceCount >= 2) {
+    let hasOwnSetting = false;
+    try { hasOwnSetting = localStorage.getItem(VISION_SENSITIVITY_KEY) !== null; } catch (e) {}
+    if (!hasOwnSetting) {
+      visionSensitivity = Math.round(federatedDefectModel.sensitivity);
+      try { localStorage.setItem(VISION_SENSITIVITY_KEY, String(visionSensitivity)); } catch (e) {}
+      const slider = document.getElementById('vision-sensitivity');
+      const val = document.getElementById('vision-sensitivity-val');
+      if (slider) slider.value = visionSensitivity;
+      if (val) val.textContent = visionSensitivity;
+    }
+  }
+
+  renderFederatedLearningPanel();
+  if (typeof renderLearningPanel === 'function') renderLearningPanel();
+  if (typeof renderVisionSensitivitySuggestion === 'function') renderVisionSensitivitySuggestion();
+}
+
+function renderFederatedLearningPanel() {
+  const el = document.getElementById('federated-learning-panel');
+  if (!el) return;
+  if (!isFedLearningEnabled()) {
+    el.innerHTML = `<div class="text-[9px] text-gray-500 px-1 leading-relaxed">🤝 Обмен опытом с цехом выключен — своё автообучение работает как обычно, но данные о нём не покидают этот телефон. <span onclick="toggleFedLearningEnabled()" class="underline cursor-pointer text-blue-500">Включить</span></div>`;
+    return;
+  }
+  const colorKeys = federatedColorModel ? Object.keys(federatedColorModel) : [];
+  const deviceCount = colorKeys.length ? Math.max(...colorKeys.map(k => federatedColorModel[k].deviceCount)) : 0;
+  const defectLine = federatedDefectModel
+    ? `<div class="text-[8px] text-gray-400">🚨 Брак: по цеху ${federatedDefectModel.count} случаев с ${federatedDefectModel.deviceCount} телефонов, средняя чувствительность ${Math.round(federatedDefectModel.sensitivity)}, ложных ~${Math.round(federatedDefectModel.falseRate * 100)}%.</div>`
+    : '';
+  if (!colorKeys.length && !defectLine) {
+    el.innerHTML = `<div class="text-[9px] text-gray-400 px-1 leading-relaxed">🤝 Федеративное обучение цеха: пока не набралось данных ни с одного телефона (нужно от ${LEARNING_MIN_SAMPLES} случаев на паре основа+пигмент минимум с 2 телефонов). Как только у коллег накопится своя статистика — здесь появится общая картина, а подсказки станут точнее сразу на всех телефонах.</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="flex justify-between items-center">
+      <span class="text-[9px] font-black uppercase text-gray-400">🤝 Федеративное обучение цеха</span>
+    </div>
+    <div class="text-[8px] text-gray-400 leading-relaxed">🎨 Цвет: ${colorKeys.length} пар основа+пигмент, вклад до ${deviceCount} телефонов.</div>
+    ${defectLine}
+    <p class="text-[8px] text-gray-500 leading-relaxed">Между телефонами передаются только числа (средняя поправка и счётчики случаев) — ни фото, ни рецепты, ни имена в общую модель не уходят, каждый телефон анонимен.</p>
+    <span onclick="toggleFedLearningEnabled()" class="text-[8px] text-gray-500 underline cursor-pointer">Выключить обмен опытом</span>`;
 }
 
 // ===== Neuro-Symbolic Hybrid =====
@@ -15320,7 +15878,7 @@ function toggleVisionFalsePositive(id) {
       const tx = db.transaction(VISION_STORE, 'readwrite');
       const store = tx.objectStore(VISION_STORE);
       const req = store.get(id);
-      req.onsuccess = () => { const rec = req.result; if (rec) { rec.falsePositive = !rec.falsePositive; store.put(rec); renderVisionSensitivitySuggestion(); renderVisionAnalyticsBody(); renderVisionRollMap(); } };
+      req.onsuccess = () => { const rec = req.result; if (rec) { rec.falsePositive = !rec.falsePositive; store.put(rec); renderVisionSensitivitySuggestion(); renderVisionAnalyticsBody(); renderVisionRollMap(); if (typeof pushFederatedUpdateToCloud === 'function') pushFederatedUpdateToCloud(); } };
     } catch (e) {}
   }
   renderVisionDefectLog();
@@ -15330,6 +15888,13 @@ function updateVisionSensitivity(val) {
   visionSensitivity = parseInt(val, 10) || 0;
   const el = document.getElementById('vision-sensitivity-val');
   if (el) el.textContent = visionSensitivity;
+  // Раньше значение нигде не сохранялось и слетало на 35 при каждой
+  // перезагрузке страницы — теперь запоминаем руками выставленное значение
+  // (см. loadVisionSensitivity) и считаем его "осознанной настройкой",
+  // которую холодный старт федеративной модели больше не имеет права
+  // тихо перезаписать (см. applyIncomingFederatedModel).
+  try { localStorage.setItem(VISION_SENSITIVITY_KEY, String(visionSensitivity)); } catch (e) {}
+  if (typeof pushFederatedUpdateToCloud === 'function') pushFederatedUpdateToCloud();
 }
 
 // Переключатель "Без рисунка / С рисунком". Смена режима ПОЛЬЗОВАТЕЛЕМ (клик по
@@ -16740,20 +17305,33 @@ async function renderVisionSensitivitySuggestion() {
   if (!el) return;
   const all = await getAllVisionDefects();
   const sample = all.slice(0, VISION_SUGGESTION_SAMPLE);
-  if (sample.length < 8) { el.classList.add('hidden'); return; }
+  // Федеративная строка: то, что уже посчитали ДРУГИЕ телефоны цеха — видно
+  // даже если у ЭТОГО телефона своих записей ещё меньше 8.
+  const fedLine = (typeof federatedDefectModel !== 'undefined' && federatedDefectModel && federatedDefectModel.deviceCount >= 2)
+    ? `🤝 По цеху (${federatedDefectModel.deviceCount} тел., ${federatedDefectModel.count} случаев): чувствительность ~${Math.round(federatedDefectModel.sensitivity)}, ложных ~${Math.round(federatedDefectModel.falseRate * 100)}%.`
+    : '';
+  if (sample.length < 8) {
+    if (!fedLine) { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.className = 'text-[9px] text-cyan-300 leading-relaxed';
+    el.textContent = fedLine;
+    return;
+  }
   const falseN = sample.filter(d => d.falsePositive).length;
   const pct = Math.round((falseN / sample.length) * 100);
   el.classList.remove('hidden');
+  let ownLine;
   if (pct >= 40) {
     el.className = 'text-[9px] text-red-300 leading-relaxed';
-    el.textContent = `⚠️ Из последних ${sample.length} записей ${falseN} (${pct}%) отмечены как «не брак» — стоит снизить чувствительность.`;
+    ownLine = `⚠️ Из последних ${sample.length} записей ${falseN} (${pct}%) отмечены как «не брак» — стоит снизить чувствительность.`;
   } else if (pct >= 20) {
     el.className = 'text-[9px] text-amber-300 leading-relaxed';
-    el.textContent = `Из последних ${sample.length} записей ${falseN} (${pct}%) отмечены как «не брак» — можно немного снизить чувствительность.`;
+    ownLine = `Из последних ${sample.length} записей ${falseN} (${pct}%) отмечены как «не брак» — можно немного снизить чувствительность.`;
   } else {
     el.className = 'text-[9px] text-emerald-300 leading-relaxed';
-    el.textContent = `Из последних ${sample.length} записей ложных ${falseN} (${pct}%) — текущая чувствительность в порядке.`;
+    ownLine = `Из последних ${sample.length} записей ложных ${falseN} (${pct}%) — текущая чувствительность в порядке.`;
   }
+  el.innerHTML = fedLine ? `${ownLine}<br><span class="text-cyan-300">${fedLine}</span>` : ownLine;
 }
 
 // Раскрывающийся блок «Аналитика брака»: тепловая карта по ширине полотна
@@ -21953,6 +22531,9 @@ async function endShiftConfirm() {
   toast('Смена закрыта' + (closeNote ? ' — заметка передана следующей смене' : ''));
   logCorrection(`Закрыли смену (длительность ${formatShiftDuration(active.endTs - active.startTs)})`, 'shift');
   renderShiftPanel();
+  // Естественный момент поделиться накопленным за смену агрегатом с общей
+  // моделью цеха (см. "Федеративное обучение цеха" — pushFederatedUpdateToCloud).
+  if (typeof pushFederatedUpdateToCloud === 'function') pushFederatedUpdateToCloud();
 }
 
 async function createProductionBatch() {
@@ -26962,6 +27543,8 @@ initPigmentSwatches();
 loadBaseMultipliers();
 loadLotMultipliers();
 loadPigmentLotMultipliers();
+loadVisionSensitivity();
+renderFederatedLearningPanel();
 renderBaseStrengthNote();
 applyStoredDarkTheme();
 renderPigmentCompatWarnings();
