@@ -606,6 +606,17 @@
       box-shadow: 0 12px 32px rgba(0,0,0,0.4); font-size: 11px; font-weight: 700; line-height: 1.5;
       max-height: 60vh; overflow-y: auto;
     }
+    /* СТРАХОВКА (баг "светофор всё равно перекрывает поле ввода чата"):
+       hideShiftTrafficLightForModal_()/renderShiftTrafficLight() правят это
+       через JS-класс "hidden" на самом виджете, и там уже была гонка (см.
+       комментарий у hideShiftTrafficLightForModal_ в JS) — окно чата открыто,
+       а какой-то фоновый рендер всё равно снимает "hidden" со светофора.
+       Это чисто CSS-правило работает независимо от той гонки: пока у body
+       висит класс chat-modal-open (ставится/снимается в openChatModal/
+       closeChatModal), светофор и его панель гарантированно не рисуются —
+       даже если JS-логика в другом месте ошибочно уберёт с них "hidden". */
+    body.chat-modal-open #shift-traffic-light,
+    body.chat-modal-open #shift-traffic-panel { display: none !important; }
     #shift-traffic-panel-body > div { padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
     #shift-traffic-panel-body > div:last-child { border-bottom: none; }
 
@@ -6899,6 +6910,7 @@ function openChatModal() {
   // поле ввода сообщения на телефоне. Прячем светофор на время, пока чат
   // открыт, и возвращаем при закрытии.
   hideShiftTrafficLightForModal_();
+  document.body.classList.add('chat-modal-open');
   switchChatTab('group');
   const cfg = sheetDbConfig || loadSheetDbConfig();
   const hasCfg = !!(cfg && cfg.url);
@@ -6923,6 +6935,7 @@ function openChatModal() {
 function closeChatModal() {
   const el = document.getElementById('chat-modal');
   if (el) el.classList.add('hidden');
+  document.body.classList.remove('chat-modal-open');
   restoreShiftTrafficLightAfterModal_();
   if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; }
   chatLastReadTs = Date.now();
@@ -6936,25 +6949,41 @@ function closeChatModal() {
 function hideShiftTrafficLightForModal_() {
   const light = document.getElementById('shift-traffic-light');
   const panel = document.getElementById('shift-traffic-panel');
-  if (light && !light.classList.contains('hidden')) {
-    light.dataset.hiddenByModal = '1';
+  // ИСПРАВЛЕНО (баг "светофор всё равно перекрывает поле ввода чата"):
+  // раньше флаг hiddenByModal ставился только если светофор В ЭТОТ МОМЕНТ
+  // уже был виден (!classList.contains('hidden')). Но светофор в принципе
+  // может быть ещё не показан к моменту открытия чата — например, самый
+  // первый рендер светофора после захода на страницу и открытие чата почти
+  // одновременно, или пользователю его вообще не показывали пару секунд
+  // (canSeeShiftTrafficLight/данные ещё не подтянулись). Тогда флаг не
+  // ставился вообще, а следующий фоновый рендер (см. renderShiftTrafficLight,
+  // вызывается каждые ~10-30с из цикла синхронизации) видел, что флага нет,
+  // и спокойно снимал class="hidden" — светофор всплывал поверх чата, хотя
+  // тот всё ещё открыт. Теперь флаг ставим ВСЕГДА, пока чат открыт, вне
+  // зависимости от того, был ли светофор виден в момент открытия — так
+  // renderShiftTrafficLight() гарантированно не тронет class="hidden", пока
+  // чат не закрыт. Значение флага запоминает, был ли светофор виден ДО
+  // открытия чата — это нужно, чтобы восстановить (или не восстановить)
+  // его видимость при закрытии чата.
+  if (light) {
+    light.dataset.hiddenByModal = light.classList.contains('hidden') ? '0' : '1';
     light.classList.add('hidden');
   }
-  if (panel && !panel.classList.contains('hidden')) {
-    panel.dataset.hiddenByModal = '1';
+  if (panel) {
+    panel.dataset.hiddenByModal = panel.classList.contains('hidden') ? '0' : '1';
     panel.classList.add('hidden');
   }
 }
 function restoreShiftTrafficLightAfterModal_() {
   const light = document.getElementById('shift-traffic-light');
   const panel = document.getElementById('shift-traffic-panel');
-  if (light && light.dataset.hiddenByModal) {
+  if (light && light.dataset.hiddenByModal !== undefined) {
+    if (light.dataset.hiddenByModal === '1') light.classList.remove('hidden');
     delete light.dataset.hiddenByModal;
-    light.classList.remove('hidden');
   }
-  if (panel && panel.dataset.hiddenByModal) {
+  if (panel && panel.dataset.hiddenByModal !== undefined) {
+    if (panel.dataset.hiddenByModal === '1') panel.classList.remove('hidden');
     delete panel.dataset.hiddenByModal;
-    panel.classList.remove('hidden');
   }
 }
 // ИСПРАВЛЕНО (баг "сообщение показано только у вас, но стоит обычная ✓"):
