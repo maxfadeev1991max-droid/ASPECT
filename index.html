@@ -2238,6 +2238,7 @@
       <div id="lead-stats-defects" class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2"></div>
       <div id="lead-stats-output" class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2"></div>
       <div id="lead-stats-spc" class="bg-white border border-gray-100 rounded-2xl p-4 space-y-3"></div>
+      <div id="lead-stats-printer-spc" class="bg-white border border-gray-100 rounded-2xl p-4 space-y-3"></div>
       <div id="lead-stats-checklist" class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2"></div>
       <div id="lead-stats-colorists" class="bg-white border border-gray-100 rounded-2xl p-4 space-y-2"></div>
     </div>
@@ -23784,44 +23785,122 @@ function renderLeadSPCStats(days) {
     el.innerHTML = '<div class="text-[10px] font-black uppercase text-gray-500">📈 Контрольные карты SPC</div><p class="text-[10px] text-gray-400">Нужно минимум 2 смены с данными lineRuns. После завершения смен появятся карты скорости и % брака.</p>';
     return;
   }
-  const stats = values => {
-    const mean = values.reduce((a, v) => a + v, 0) / values.length;
-    const sd = Math.sqrt(values.reduce((a, v) => a + Math.pow(v - mean, 2), 0) / values.length);
-    return { mean, sd, ucl: mean + 3 * sd, lcl: Math.max(0, mean - 3 * sd), hi2: mean + 2 * sd, lo2: mean - 2 * sd };
-  };
-  const ruleSignals = (values, s) => {
-    const signals = [];
-    values.forEach((v, i) => { if (v > s.ucl || v < s.lcl) signals.push({ i, text: 'точка за пределами 3σ' }); });
-    for (let i = 2; i < values.length; i++) {
-      const window = values.slice(i - 2, i + 1);
-      const hi = window.filter(v => v > s.hi2).length, lo = window.filter(v => v < s.lo2).length;
-      if (hi >= 2 || lo >= 2) signals.push({ i, text: '2 из 3 точек за пределами 2σ' });
-    }
-    let runSide = 0, runCount = 0;
-    values.forEach((v, i) => {
-      const side = v > s.mean ? 1 : (v < s.mean ? -1 : 0);
-      if (side && side === runSide) runCount++; else { runSide = side; runCount = side ? 1 : 0; }
-      if (runCount >= 7) signals.push({ i, text: '7 точек по одну сторону от среднего' });
-    });
-    return [...new Map(signals.map(x => [x.i + ':' + x.text, x])).values()];
-  };
-  const chart = (title, values, unit, color) => {
-    const s = stats(values), signals = ruleSignals(values, s), W = 620, H = 180, pad = 30;
-    const all = values.concat([s.ucl, s.lcl, s.mean]).filter(Number.isFinite);
-    const min = Math.min(...all), max = Math.max(...all), span = max - min || 1;
-    const x = i => pad + (values.length === 1 ? 0 : i * (W - 2 * pad) / (values.length - 1));
-    const y = v => H - pad - (v - min) / span * (H - 2 * pad);
-    const line = (v, stroke, dash) => `<line x1="${pad}" y1="${y(v)}" x2="${W - pad}" y2="${y(v)}" stroke="${stroke}" stroke-width="1" ${dash ? 'stroke-dasharray="5 4"' : ''}/>`;
-    const poly = values.map((v, i) => `${x(i)},${y(v)}`).join(' ');
-    const dots = values.map((v, i) => {
-      const bad = signals.some(sg => sg.i === i);
-      return `<circle cx="${x(i)}" cy="${y(v)}" r="${bad ? 5 : 3.5}" fill="${bad ? '#dc2626' : color}"/>`;
-    }).join('');
-    const labels = points.map((p, i) => `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="#64748b">${p.label}</text>`).join('');
-    return `<div class="border border-gray-100 rounded-xl p-3 space-y-1"><div class="text-[10px] font-black uppercase text-gray-600">${title}</div><svg viewBox="0 0 ${W} ${H}" class="w-full h-44 bg-slate-50 rounded-lg">${line(s.ucl, '#fca5a5', true)}${line(s.mean, '#64748b', false)}${line(s.lcl, '#fca5a5', true)}<polyline points="${poly}" fill="none" stroke="${color}" stroke-width="2.5"/>${dots}${labels}<text x="${W - pad}" y="${Math.max(12, y(s.ucl) - 4)}" text-anchor="end" font-size="9" fill="#ef4444">ВКП 3σ</text><text x="${W - pad}" y="${Math.min(H - 20, y(s.mean) - 4)}" text-anchor="end" font-size="9" fill="#475569">среднее</text></svg><div class="text-[9px] text-gray-500">Среднее: <b>${s.mean.toFixed(2)} ${unit}</b> · пределы: ${s.lcl.toFixed(2)}–${s.ucl.toFixed(2)} ${unit}</div>${signals.length ? `<div class="text-[9px] font-bold text-red-600">⚠️ ${signals.map(sg => `${points[sg.i].label}: ${sg.text}`).join(' · ')}</div>` : '<div class="text-[9px] font-bold text-emerald-600">✅ Сигналов разладки нет</div>'}</div>`;
-  };
   const speedValues = points.map(p => p.speed), defectValues = points.map(p => p.defect);
-  el.innerHTML = `<div class="flex items-center justify-between"><div class="text-[10px] font-black uppercase text-gray-500">📈 Контрольные карты Шухарта (SPC)</div><span class="text-[9px] text-gray-400">${points.length} смен</span></div><p class="text-[9px] text-gray-400">Красные точки — автоматический сигнал: выход за 3σ, правило 2 из 3 за 2σ или 7 подряд по одну сторону от среднего.</p><div class="grid grid-cols-1 lg:grid-cols-2 gap-3">${chart('Скорость линии', speedValues, 'м/мин', '#0891b2')}${chart('% брака запуска', defectValues, '%', '#7c3aed')}</div>`;
+  const labels = points.map(p => p.label);
+  el.innerHTML = `<div class="flex items-center justify-between"><div class="text-[10px] font-black uppercase text-gray-500">📈 Контрольные карты Шухарта (SPC) — весь цех</div><span class="text-[9px] text-gray-400">${points.length} смен</span></div><p class="text-[9px] text-gray-400">Красные точки — автоматический сигнал: выход за 3σ, правило 2 из 3 за 2σ или 7 подряд по одну сторону от среднего.</p><div class="grid grid-cols-1 lg:grid-cols-2 gap-3">${spcChartSvg('Скорость линии', speedValues, labels, 'м/мин', '#0891b2')}${spcChartSvg('% брака запуска', defectValues, labels, '%', '#7c3aed')}</div>`;
+}
+// ---------- Общие утилиты SPC (используются и для цеха в целом, и для
+// разбивки по каждому ст. печатнику ниже) ----------
+function spcStats(values) {
+  const mean = values.reduce((a, v) => a + v, 0) / values.length;
+  const sd = Math.sqrt(values.reduce((a, v) => a + Math.pow(v - mean, 2), 0) / values.length);
+  return { mean, sd, ucl: mean + 3 * sd, lcl: Math.max(0, mean - 3 * sd), hi2: mean + 2 * sd, lo2: mean - 2 * sd };
+}
+function spcRuleSignals(values, s) {
+  const signals = [];
+  values.forEach((v, i) => { if (v > s.ucl || v < s.lcl) signals.push({ i, text: 'точка за пределами 3σ' }); });
+  for (let i = 2; i < values.length; i++) {
+    const window = values.slice(i - 2, i + 1);
+    const hi = window.filter(v => v > s.hi2).length, lo = window.filter(v => v < s.lo2).length;
+    if (hi >= 2 || lo >= 2) signals.push({ i, text: '2 из 3 точек за пределами 2σ' });
+  }
+  let runSide = 0, runCount = 0;
+  values.forEach((v, i) => {
+    const side = v > s.mean ? 1 : (v < s.mean ? -1 : 0);
+    if (side && side === runSide) runCount++; else { runSide = side; runCount = side ? 1 : 0; }
+    if (runCount >= 7) signals.push({ i, text: '7 точек по одну сторону от среднего' });
+  });
+  return [...new Map(signals.map(x => [x.i + ':' + x.text, x])).values()];
+}
+function spcChartSvg(title, values, labels, unit, color) {
+  const s = spcStats(values), signals = spcRuleSignals(values, s), W = 620, H = 180, pad = 30;
+  const all = values.concat([s.ucl, s.lcl, s.mean]).filter(Number.isFinite);
+  const min = Math.min(...all), max = Math.max(...all), span = max - min || 1;
+  const x = i => pad + (values.length === 1 ? 0 : i * (W - 2 * pad) / (values.length - 1));
+  const y = v => H - pad - (v - min) / span * (H - 2 * pad);
+  const line = (v, stroke, dash) => `<line x1="${pad}" y1="${y(v)}" x2="${W - pad}" y2="${y(v)}" stroke="${stroke}" stroke-width="1" ${dash ? 'stroke-dasharray="5 4"' : ''}/>`;
+  const poly = values.map((v, i) => `${x(i)},${y(v)}`).join(' ');
+  const dots = values.map((v, i) => {
+    const bad = signals.some(sg => sg.i === i);
+    return `<circle cx="${x(i)}" cy="${y(v)}" r="${bad ? 5 : 3.5}" fill="${bad ? '#dc2626' : color}"/>`;
+  }).join('');
+  const labelEls = labels.map((label, i) => `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="#64748b">${label}</text>`).join('');
+  return `<div class="border border-gray-100 rounded-xl p-3 space-y-1"><div class="text-[10px] font-black uppercase text-gray-600">${title}</div><svg viewBox="0 0 ${W} ${H}" class="w-full h-44 bg-slate-50 rounded-lg">${line(s.ucl, '#fca5a5', true)}${line(s.mean, '#64748b', false)}${line(s.lcl, '#fca5a5', true)}<polyline points="${poly}" fill="none" stroke="${color}" stroke-width="2.5"/>${dots}${labelEls}<text x="${W - pad}" y="${Math.max(12, y(s.ucl) - 4)}" text-anchor="end" font-size="9" fill="#ef4444">ВКП 3σ</text><text x="${W - pad}" y="${Math.min(H - 20, y(s.mean) - 4)}" text-anchor="end" font-size="9" fill="#475569">среднее</text></svg><div class="text-[9px] text-gray-500">Среднее: <b>${s.mean.toFixed(2)} ${unit}</b> · пределы: ${s.lcl.toFixed(2)}–${s.ucl.toFixed(2)} ${unit}</div>${signals.length ? `<div class="text-[9px] font-bold text-red-600">⚠️ ${signals.map(sg => `${labels[sg.i]}: ${sg.text}`).join(' · ')}</div>` : '<div class="text-[9px] font-bold text-emerald-600">✅ Сигналов разладки нет</div>'}</div>`;
+}
+// ---------- 6b. Контрольные карты Шухарта + сводка — по каждому ст.
+// печатнику отдельно (а не суммарно по цеху, как в renderLeadSPCStats
+// выше). Выкатка и % брака берутся из той же логики, что и «Личный зачёт
+// печатников» (buildOperatorShiftBreakdown/operatorNetMetersForShift) —
+// брак на линии за смену распределяется между печатниками, стоявшими на
+// ней, пропорционально их метрам, поэтому цифры совпадают с зачётом на
+// «Панели». Скорость — средневзвешенная по времени для забегов именно
+// этого печатника, попавших (полностью или частично) в данную смену.
+function computeLeadPrinterSPCStats(days) {
+  const since = leadStatsSince(days);
+  const breakdown = buildOperatorShiftBreakdown(days * 24 * 60 * 60 * 1000);
+  const perOperator = {};
+  Object.keys(breakdown).map(Number).filter(key => key >= since).sort((a, b) => a - b).forEach(key => {
+    const winStart = key, winEnd = key + SHIFT_LENGTH_MS;
+    const operators = breakdown[key];
+    Object.keys(operators).forEach(op => {
+      const { raw, net } = operatorNetMetersForShift(operators[op], key, op);
+      if (raw <= 0) return;
+      const runs = (lineRuns || []).filter(r => {
+        if (!r.startTs) return false;
+        const name = applyPersonNameAlias_(r.operatorName || r.createdBy);
+        if (name !== op) return false;
+        const rEnd = r.endTs || Date.now();
+        return r.startTs < winEnd && rEnd > winStart;
+      });
+      let speedSum = 0, speedMinutes = 0;
+      runs.forEach(r => {
+        const speed = parseFloat(r.speedMPerMin) || 0;
+        if (speed <= 0) return;
+        const overlapStart = Math.max(r.startTs, winStart);
+        const overlapEnd = Math.min(r.endTs || Date.now(), winEnd);
+        const minutes = Math.max(0, (overlapEnd - overlapStart) / 60000);
+        speedSum += speed * minutes; speedMinutes += minutes;
+      });
+      const speed = speedMinutes > 0 ? speedSum / speedMinutes : null;
+      const defectPct = Math.round(((raw - net) / raw) * 1000) / 10;
+      if (!perOperator[op]) perOperator[op] = { points: [], rawSum: 0, netSum: 0 };
+      perOperator[op].rawSum += raw; perOperator[op].netSum += net;
+      if (speed !== null) perOperator[op].points.push({ key, label: new Date(key).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }), speed, defect: defectPct });
+    });
+  });
+  const rows = Object.entries(perOperator).map(([name, v]) => ({
+    name, points: v.points,
+    netRolls: v.netSum / METERS_PER_ROLL, rawRolls: v.rawSum / METERS_PER_ROLL,
+    defectPct: v.rawSum > 0 ? Math.round(((v.rawSum - v.netSum) / v.rawSum) * 1000) / 10 : 0,
+    avgSpeed: v.points.length ? Math.round(v.points.reduce((s, p) => s + p.speed, 0) / v.points.length * 10) / 10 : null
+  })).sort((a, b) => b.netRolls - a.netRolls);
+  return rows;
+}
+function renderLeadPrinterSPCStats(days) {
+  const el = document.getElementById('lead-stats-printer-spc');
+  if (!el) return;
+  const rows = computeLeadPrinterSPCStats(days);
+  if (!rows.length) {
+    el.innerHTML = '<div class="text-[10px] font-black uppercase text-gray-500">📊 Каждый ст. печатник — брак, выкатка, скорость</div><p class="text-[10px] text-gray-400">Нет данных lineRuns с указанным оператором за период.</p>';
+    return;
+  }
+  el.innerHTML = `
+    <div class="flex items-center justify-between">
+      <div class="text-[10px] font-black uppercase text-gray-500">📊 Каждый ст. печатник — брак, выкатка, скорость</div>
+      <span class="text-[9px] text-gray-400">${rows.length} чел.</span>
+    </div>
+    <p class="text-[9px] text-gray-400">Выкатка и % брака — как в «Личном зачёте» (брак линии за смену распределён пропорционально метрам каждого). Своя карта Шухарта строится, только если по человеку есть минимум 2 смены со скоростью.</p>
+    <div class="space-y-3">
+      ${rows.map(r => `
+        <div class="border border-gray-100 rounded-2xl p-3 space-y-2">
+          <div class="flex items-center justify-between gap-2 flex-wrap">
+            <span class="text-xs font-black truncate">${escapeHtmlProd(r.name)}</span>
+            <span class="text-[10px] text-gray-500 font-bold shrink-0">${Math.round(r.netRolls)} рул. (≈${Math.round(r.rawRolls)} до брака) · брак ${r.defectPct}%${r.avgSpeed != null ? ' · ~' + r.avgSpeed + ' м/мин' : ''}</span>
+          </div>
+          ${r.points.length >= 2 ? `<div class="grid grid-cols-1 lg:grid-cols-2 gap-2">${spcChartSvg('Скорость линии', r.points.map(p => p.speed), r.points.map(p => p.label), 'м/мин', '#0891b2')}${spcChartSvg('% брака запуска', r.points.map(p => p.defect), r.points.map(p => p.label), '%', '#7c3aed')}</div>` : '<p class="text-[9px] text-gray-400">Нужно минимум 2 смены со скоростью для собственной карты Шухарта.</p>'}
+        </div>`).join('')}
+    </div>
+  `;
 }
 function renderLeadStatsSection() {
   const section = document.getElementById('lead-stats-section');
@@ -23835,6 +23914,7 @@ function renderLeadStatsSection() {
   renderLeadDefectStats(days);
   renderLeadOutputStats(days);
   renderLeadSPCStats(days);
+  renderLeadPrinterSPCStats(days);
   renderLeadChecklistStats(days);
   renderLeadColoristTrendStats(days);
   const answerEl = document.getElementById('lead-stats-ask-answer');
