@@ -4655,6 +4655,16 @@ const CLOUD_SNAPSHOT_COALESCE_MS = 1500;
 let _cloudSnapshotInflight = null;
 let _cloudSnapshotCache = null;
 let _cloudSnapshotCacheAt = 0;
+// Точечные POST-операции (заявка на краску, смена статуса заявки) меняют
+// общую базу, но не проходят через pushCloudSnapshot(). Поэтому после них
+// нельзя отдавать следующему read-modify-write старый coalesce-кэш: например,
+// «Налил» сначала сохраняет done через быстрый endpoint, а announcePaintPoured
+// тут же читает снимок, который ещё содержит pending, и мог бы записать его
+// обратно поверх свежего статуса.
+function invalidateCloudSnapshotCache() {
+  _cloudSnapshotCache = null;
+  _cloudSnapshotCacheAt = 0;
+}
 async function fetchCloudSnapshot() {
   const now = Date.now();
   if (_cloudSnapshotInflight) return _cloudSnapshotInflight;
@@ -4793,8 +4803,7 @@ async function pushCloudSnapshot(record) {
   if (out && out.ok === false) throw new Error(out.error || 'Ошибка записи в таблицу');
    /* После записи следующий fetch должен увидеть именно новую блокировку,
       а не старый coalesce-кэш предыдущего чтения. */
-   _cloudSnapshotCache = null;
-   _cloudSnapshotCacheAt = 0;
+   invalidateCloudSnapshotCache();
   return true;
 }
 
@@ -8226,6 +8235,10 @@ async function sendPaintRequestDirect(req) {
   let result;
   try { result = text ? JSON.parse(text) : {}; } catch (e) { throw new Error('Сервер вернул некорректный ответ'); }
   if (!result || result.ok !== true) throw new Error((result && result.error) || 'Сервер не подтвердил заявку');
+  // putPaintRequest — отдельная точечная операция, не проходящая через
+  // pushCloudSnapshot(), поэтому обычный GET сразу после неё должен быть
+  // сетевым, а не брать снимок до появления заявки.
+  invalidateCloudSnapshotCache();
   return { paintRequests: [req] };
 }
 
@@ -8363,6 +8376,12 @@ async function updatePaintRequestStatus(id, newStatus) {
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const result = await resp.json();
     if (!result || result.ok !== true || !result.request) throw new Error((result && result.error) || 'Сервер не подтвердил изменение');
+    // updatePaintRequest — тоже отдельный endpoint. Особенно важно перед
+    // fulfillPaintRequest(): сразу после статуса done вызывается
+    // announcePaintPoured(), который делает read-modify-write полного снимка.
+    // Без сброса кэша он мог прочитать старый pending/in_progress и вернуть
+    // его в общую базу вместе с paintAlert.
+    invalidateCloudSnapshotCache();
     // Сразу меняем локальный список, не дожидаясь следующего heartbeat.
     rememberPaintRequestVisibility({ ...result.request, _statusGuard: true });
     paintRequests = paintRequests.map(r => r.id === id ? result.request : r);
@@ -30360,9 +30379,13 @@ if (location.protocol === 'file:') {
        render();
        return false;
      }
-     if (cloudReady()) {
-       try {
-         const remote = await fetchCloudSnapshot();
+      if (cloudReady()) {
+        try {
+          /* Перед критичным запуском не используем coalesce-кэш от
+             предыдущего открытия окна/проверки. Иначе другой экран мог уже
+             освободить линию, а здесь ещё до 1,5 с показывался старый lock. */
+          if (typeof invalidateCloudSnapshotCache === 'function') invalidateCloudSnapshotCache();
+          const remote = await fetchCloudSnapshot();
          remoteRunLock = remoteLockFor(remote, line);
          remoteCheckedAt = Date.now();
          const blocking = blockingLock(line);
@@ -30624,7 +30647,14 @@ if (location.protocol === 'file:') {
     syncInput('vpb-speed', state.speed);
     if ($('vpb-paint-type')) $('vpb-paint-type').value = state.paintType;
 
-     const activeBlock = !state.running ? blockingLock(lineKey(state.line || getLine())) : null;
+      const activeBlock = !state.running ? blockingLock(lineKey(state.line || getLine())) : null;
+      /* После истечения lock старая диагностическая строка не должна
+         оставаться на экране и создавать впечатление, что кнопка всё ещё
+         заблокирована. Если реального активного владельца уже нет, это только
+         хвост предыдущей попытки запуска. */
+      if (!activeBlock && !lockBusy && /Линия .*занят|Линия .*запущен|запуск не начат/i.test(alertText)) {
+        alertText = '';
+      }
      $('vpb-status').innerHTML = state.running
        ? `<span class="vpb-dot"></span> Идёт расчёт · ${round(state.palletProgress, 1)} / ${round(state.palletMeters, 1)} м`
        : activeBlock
