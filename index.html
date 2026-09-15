@@ -4489,20 +4489,11 @@ const SHEETDB_DEFAULT_CONFIG = {
 <script>
 /* inlined aspect-cloud-sync.js */
 /* aspect-cloud-sync.js — ядро общей базы (fetch/push снимка)
- * Глобалы, которые задаёт основной HTML до или рядом:
- *   sheetDbConfig, SHEETDB_CONFIG_KEY, SHEETDB_DEFAULT_CONFIG
- * Если HTML подключает этот файл после объявления этих имён — всё ок.
- * Если файл один (standalone) — ниже есть fallback-объявления.
+ * Глобалы sheetDbConfig, SHEETDB_CONFIG_KEY, SHEETDB_DEFAULT_CONFIG уже
+ * объявлены выше в этом standalone-файле (let/const), поэтому fallback-
+ * объявления через var здесь убраны — они конфликтовали с теми let/const
+ * и ломали выполнение этого <script> целиком (SyntaxError: redeclaration).
  */
-if (typeof SHEETDB_CONFIG_KEY === 'undefined') {
-  var SHEETDB_CONFIG_KEY = 'colorist_sheetdb_config';
-}
-if (typeof sheetDbConfig === 'undefined') {
-  var sheetDbConfig = null;
-}
-if (typeof SHEETDB_DEFAULT_CONFIG === 'undefined') {
-  var SHEETDB_DEFAULT_CONFIG = { url: '' };
-}
 
 function loadSheetDbConfig() {
   try {
