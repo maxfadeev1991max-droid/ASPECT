@@ -5566,20 +5566,73 @@ async function showSimilarQuickEventsHint_(suffix, embedding, kind, category) {
   } catch (e) { /* необязательная подсказка — тихо пропускаем */ }
 }
 
+// Подставляет линию и артикул из текущего незавершённого забега. Поля
+// остаются редактируемыми: если сотрудник начал вводить другое значение,
+// фоновый опрос его не перезапишет. Для начальника смены, у которого нет
+// своей линии, автоподстановка артикула включается после выбора линии.
+function prefillQuickEventFields_(suffix) {
+  const lineEl = document.getElementById('qe-line-' + suffix);
+  const articleEl = document.getElementById('qe-article-' + suffix);
+  if (!lineEl || !articleEl) return;
+  const profileLine = currentUserProfile && currentUserProfile.line
+    ? String(currentUserProfile.line) : '';
+  const typedLine = String(lineEl.value || '').trim();
+  const line = typedLine || profileLine;
+  const runs = typeof lineRuns !== 'undefined' && Array.isArray(lineRuns) ? lineRuns : [];
+  let active = line
+    ? runs.filter(r => r && !r.endTs && normalizeLineKey(r.line) === normalizeLineKey(line))
+        .sort((a, b) => Number(a.startTs || 0) - Number(b.startTs || 0)).pop()
+    : null;
+  /* У начальника смены нет своей линии: не угадываем, если одновременно
+     работают несколько линий. Если активна ровно одна — её можно подставить
+     безопасно. */
+  if (!active && !typedLine && !profileLine) {
+    const activeRuns = runs.filter(r => r && !r.endTs);
+    if (activeRuns.length === 1) active = activeRuns[0];
+  }
+  if (active) {
+    if (!typedLine || lineEl.dataset.autoValue === typedLine) {
+      lineEl.value = String(active.line || '');
+      lineEl.dataset.autoValue = lineEl.value;
+      lineEl.dataset.autoFilled = '1';
+    }
+    const article = String(active.article || '').trim();
+    const currentArticle = String(articleEl.value || '').trim();
+    if (article && (!currentArticle || (articleEl.dataset.autoValue || '') === currentArticle)) {
+      articleEl.value = article;
+      articleEl.dataset.autoValue = article;
+      articleEl.dataset.autoFilled = '1';
+    }
+  } else if (!typedLine && profileLine) {
+    lineEl.value = profileLine;
+    lineEl.dataset.autoValue = profileLine;
+    lineEl.dataset.autoFilled = '1';
+  }
+}
+
 function initQuickEventsPanels() {
   const printerHost = document.getElementById('quick-events-panel-printer-wrap');
-  if (printerHost) { printerHost.innerHTML = renderQuickEventsPanelHTML_('printer'); refreshQuickEventsSummary('printer'); }
+  if (printerHost) {
+    printerHost.innerHTML = renderQuickEventsPanelHTML_('printer');
+    prefillQuickEventFields_('printer');
+    refreshQuickEventsSummary('printer');
+  }
 
   const leaderWrap = document.getElementById('quick-events-panel-leader-wrap');
   if (leaderWrap && typeof canSeeShiftTrafficLight === 'function' && canSeeShiftTrafficLight()) {
     leaderWrap.classList.remove('hidden');
     leaderWrap.innerHTML = renderQuickEventsPanelHTML_('leader');
+    prefillQuickEventFields_('leader');
     refreshQuickEventsSummary('leader');
   }
   qeUpdateQueueBadges_();
   qeFlushQueue(); // на случай, если в очереди осталось что-то с прошлого раза (закрыли вкладку при плохой связи)
 }
 document.addEventListener('DOMContentLoaded', initQuickEventsPanels);
+setInterval(() => {
+  prefillQuickEventFields_('printer');
+  prefillQuickEventFields_('leader');
+}, 2500);
 
 // ===== Оффлайн-очередь для "Быстрых отметок" =====
 // На слабой связи (тот же LTE в одно деление и "Fetch is aborted", что мы
@@ -5701,6 +5754,7 @@ async function refreshQuickEventsSummary(suffix) {
 }
 
 async function logQuickEvent(kind, category, suffix) {
+  prefillQuickEventFields_(suffix);
   const statusEl = document.getElementById('qe-status-' + suffix);
   const cfg = sheetDbConfig || loadSheetDbConfig();
   if (!cfg || !cfg.url) { if (statusEl) statusEl.textContent = '⚠️ база не настроена'; return; }
@@ -20110,6 +20164,10 @@ function startLineRun(prefix) {
   markLineRunPending(newRun.id);
   renderLineRunCard(prefix);
   if (typeof window.vpbSyncWithLineRun === 'function') window.vpbSyncWithLineRun(newRun);
+  if (typeof prefillQuickEventFields_ === 'function') {
+    prefillQuickEventFields_('printer');
+    prefillQuickEventFields_('leader');
+  }
   lineRunsCloudSyncing = true;
   syncLineRunsToCloud(lineRuns).finally(() => { lineRunsCloudSyncing = false; });
 }
@@ -30042,7 +30100,8 @@ if (location.protocol === 'file:') {
   const SECTIONS = 8;
   const STANDARD_CAPACITY = 250;
   const WATER_CAPACITY = 40;
-  const DEFAULT_PALLET_METERS = 964;
+   const DEFAULT_PALLET_METERS = 964.8;
+   const DEFAULT_ROLLS_PER_PALLET = 96;
    const RUN_LOCKS_KEY = 'aspect_virtual_paint_run_locks_v1';
    const RUN_OWNER_KEY = 'aspect_virtual_paint_run_owner_v1';
    const RUN_LEASE_MS = 18000;
@@ -30065,10 +30124,12 @@ if (location.protocol === 'file:') {
     return {
       line: '',
       article: '',
-      paintType: 'standard',
+      paintType: 'plastisol',
       gsm: 70,
       rollLength: 10.05,
-      rollWidth: 1.06,
+       rollWidth: 1.06,
+       rollCount: DEFAULT_ROLLS_PER_PALLET,
+       rollWeightActualKg: 0,
       palletMeters: DEFAULT_PALLET_METERS,
       speed: 0,
       running: false,
@@ -30083,7 +30144,7 @@ if (location.protocol === 'file:') {
        runStartedAt: 0,
        runLeaseUntil: 0,
       buckets: Array.from({ length: SECTIONS }, (_, i) => ({
-        section: i + 1, currentKg: '', rateKgPer1000: '', capacityKg: STANDARD_CAPACITY
+        section: i + 1, currentKg: '', rateKgPer1000: '', paintType: 'plastisol', capacityKg: STANDARD_CAPACITY
       }))
     };
   }
@@ -30091,19 +30152,28 @@ if (location.protocol === 'file:') {
     const base = newState();
     const source = raw && typeof raw === 'object' ? raw : {};
     const state = Object.assign(base, source);
-    state.paintType = state.paintType === 'water' ? 'water' : 'standard';
+    state.paintType = state.paintType === 'water' ? 'water' : 'plastisol';
     state.buckets = Array.from({ length: SECTIONS }, (_, i) => {
       const old = Array.isArray(source.buckets) ? (source.buckets[i] || {}) : {};
       return {
         section: i + 1,
         currentKg: old.currentKg == null ? '' : old.currentKg,
         rateKgPer1000: old.rateKgPer1000 == null ? '' : old.rateKgPer1000,
-        capacityKg: state.paintType === 'water' ? WATER_CAPACITY : STANDARD_CAPACITY
+        paintType: old.paintType === 'water' ? 'water' : (old.paintType === 'plastisol' ? 'plastisol' : state.paintType),
+        capacityKg: Math.max(0.1, num(
+          old.capacityKg,
+          (old.paintType === 'water' || state.paintType === 'water') ? WATER_CAPACITY : STANDARD_CAPACITY
+        ))
       };
     });
     state.gsm = num(state.gsm, 70);
     state.rollLength = num(state.rollLength, 10.05);
     state.rollWidth = num(state.rollWidth, 1.06);
+    state.rollCount = Math.max(1, Math.round(num(
+      source.rollCount,
+      Math.round(num(state.palletMeters, DEFAULT_PALLET_METERS) / Math.max(0.1, state.rollLength))
+    )));
+    state.rollWeightActualKg = Math.max(0, num(source.rollWeightActualKg, 0));
     state.palletMeters = Math.max(1, num(state.palletMeters, DEFAULT_PALLET_METERS));
     state.speed = Math.max(0, num(state.speed, 0));
     state.palletProgress = Math.max(0, num(state.palletProgress, 0));
@@ -30328,7 +30398,8 @@ if (location.protocol === 'file:') {
      if (all[line] && (!token || all[line].token === token)) {
        delete all[line]; writeRunLocks(all);
      }
-     state.runOwner = ''; state.runToken = ''; state.runStartedAt = 0; state.runLeaseUntil = 0;
+      state.runOwner = ''; state.runToken = ''; state.runStartedAt = 0; state.runLeaseUntil = 0;
+      save();
      if (!line || !cloudReady()) return;
      try {
        await pushCloudSnapshotWithRetry(remote => {
@@ -30387,18 +30458,35 @@ if (location.protocol === 'file:') {
     return state.paintType === 'water' ? WATER_CAPACITY : STANDARD_CAPACITY;
   }
   function paperMetrics() {
-    const rollKg = state.gsm * state.rollLength * state.rollWidth / 1000;
+    const autoRollKg = state.gsm * state.rollLength * state.rollWidth / 1000;
+    const rollKg = state.rollWeightActualKg > 0 ? state.rollWeightActualKg : autoRollKg;
     /* Для 1000 м бумаги: gsm (г/м²) × ширина (м) × 1000 м / 1000 =
        gsm × ширина кг. Это позволяет честно показать краску не только
        на метр/рулон, но и относительно массы бумаги. */
     const paperKgPer1000m = state.gsm * state.rollWidth;
-    const rolls = state.palletMeters / state.rollLength;
+    const rolls = state.rollCount || Math.max(1, Math.round(state.palletMeters / state.rollLength));
+    const paintBySection = state.buckets.map(bucket => ({
+      section: bucket.section,
+      paintType: bucket.paintType === 'water' ? 'water' : 'plastisol',
+      kgPer1000: Math.max(0, num(bucket.rateKgPer1000)),
+      kgPerRoll: Math.max(0, num(bucket.rateKgPer1000)) * state.rollLength / 1000
+    }));
+    const paintKgPerRoll = paintBySection.reduce((sum, item) => sum + item.kgPerRoll, 0);
+    const finishedRollKg = rollKg + paintKgPerRoll;
     return {
+      autoRollKg,
       rollKg,
+      actualRollKg: state.rollWeightActualKg,
       paperKgPer1000m,
       rolls,
+      paintBySection,
+      paintKgPerRoll,
+      finishedRollKg,
       palletPaperKg: rollKg * rolls,
-      area: state.palletMeters * state.rollWidth
+      palletPaintKg: paintKgPerRoll * rolls,
+      palletFinishedKg: finishedRollKg * rolls,
+      area: rolls * state.rollLength * state.rollWidth,
+      calculatedPalletMeters: rolls * state.rollLength
     };
   }
   function getLine() {
@@ -30438,6 +30526,7 @@ if (location.protocol === 'file:') {
   function stopFollowedLineRun(run) {
     const runId = run && run.id != null ? String(run.id) : '';
     if (!state.followLineRunId || (runId && state.followLineRunId !== runId)) return;
+    const hadLock = !!state.runToken;
     state.followLineRunId = '';
     if (state.running) {
       state.running = false;
@@ -30448,6 +30537,7 @@ if (location.protocol === 'file:') {
     } else {
       save();
       render();
+      if (hadLock) releaseRunLock();
     }
   }
   function syncWithLineRun(run, autoStart) {
@@ -30466,7 +30556,25 @@ if (location.protocol === 'file:') {
     state.gsm = Math.max(1, num($('vpb-gsm') && $('vpb-gsm').value, 70));
     state.rollLength = Math.max(0.1, num($('vpb-roll-length') && $('vpb-roll-length').value, 10.05));
     state.rollWidth = Math.max(0.1, num($('vpb-roll-width') && $('vpb-roll-width').value, 1.06));
-    state.palletMeters = Math.max(1, num($('vpb-pallet-meters') && $('vpb-pallet-meters').value, 964));
+    const rollCountEl = $('vpb-roll-count');
+    const actualWeightEl = $('vpb-roll-weight-actual');
+    if (rollCountEl && document.activeElement === rollCountEl) {
+      state.rollCount = Math.max(1, Math.round(num(rollCountEl.value, DEFAULT_ROLLS_PER_PALLET)));
+      state.palletMeters = state.rollCount * state.rollLength;
+    } else {
+      state.rollCount = Math.max(1, Math.round(num(state.palletMeters, DEFAULT_PALLET_METERS) / state.rollLength));
+    }
+    if (actualWeightEl && document.activeElement === actualWeightEl) {
+      state.rollWeightActualKg = Math.max(0, num(actualWeightEl.value, 0));
+    }
+    state.palletMeters = Math.max(1, num($('vpb-pallet-meters') && $('vpb-pallet-meters').value, DEFAULT_PALLET_METERS));
+    if (rollCountEl && document.activeElement === rollCountEl) {
+      state.palletMeters = state.rollCount * state.rollLength;
+    }
+    const palletMetersEl = $('vpb-pallet-meters');
+    if (palletMetersEl && document.activeElement === palletMetersEl) {
+      state.rollCount = Math.max(1, Math.round(state.palletMeters / state.rollLength));
+    }
     state.speed = Math.max(0, num($('vpb-speed') && $('vpb-speed').value, 0));
     state.buckets.forEach((bucket, i) => {
       const current = $('vpb-current-' + i);
@@ -30509,15 +30617,31 @@ if (location.protocol === 'file:') {
     $('vpb-progress').style.width = progress + '%';
     $('vpb-progress-label').textContent = `${round(progress, 1)}% · палет готово: ${state.completedPallets}`;
     $('vpb-total').textContent = `${round(totalRemaining, 2)} кг`;
-    $('vpb-paper-calc').innerHTML =
-      `⚖️ Вес 1 рулона: <b>${round(m.rollKg, 3)} кг</b> · ` +
-      `бумаги на 1000 м: <b>${round(m.paperKgPer1000m, 2)} кг</b> · ` +
-      `на палету: <b>${round(m.rolls, 1)} рул.</b> / <b>${round(m.palletPaperKg, 2)} кг</b> · ` +
-      `${round(m.area, 1)} м²`;
-    $('vpb-alert').classList.toggle('vpb-hidden', !alertText && !pending.length);
-    $('vpb-alert').innerHTML = alertText || (pending.length
-      ? `🔔 Палета №${pending[0].pallet} готова — внесите фактический расход по секциям.`
-      : '');
+     syncInput('vpb-roll-count', m.rolls);
+     syncInput('vpb-roll-weight-actual', state.rollWeightActualKg || '');
+     const paintBreakdown = m.paintBySection
+       .filter(item => item.kgPerRoll > 0)
+       .map(item => `С${item.section} ${item.paintType === 'water' ? 'водная' : 'пластизольная'}: ${round(item.kgPerRoll, 3)} кг/рулон`)
+       .join(' · ');
+     $('vpb-paper-calc').innerHTML =
+       `⚖️ Вес 1 рулона: <b>${round(m.rollKg, 3)} кг</b>` +
+       `${m.actualRollKg > 0 ? ` (по весам; расчёт по граммажу: ${round(m.autoRollKg, 3)} кг)` : ` (автоматически: ${state.gsm} × ${state.rollWidth} × ${state.rollLength} / 1000)`}` +
+       ` · рулонов в палете: <b>${round(m.rolls, 0)} шт.</b> · ` +
+       `метраж палеты: <b>${round(m.calculatedPalletMeters, 2)} м</b> · ` +
+       `краски на рулон: <b>${round(m.paintKgPerRoll, 3)} кг</b> · ` +
+       `готовый рулон: <b>${round(m.finishedRollKg, 3)} кг</b> · ` +
+       `вес готовой палеты: <b>${round(m.palletFinishedKg, 2)} кг</b> · ` +
+       `бумаги на палете: <b>${round(m.palletPaperKg, 2)} кг</b>` +
+       `${paintBreakdown ? ` · <br>По секциям: ${paintBreakdown}` : ''} · ${round(m.area, 1)} м²`;
+     const activeLockText = activeBlock
+       ? `⚠️ Линия ${esc(state.line || getLine())} занята: ${esc(lockLabel(activeBlock))}. Если линия действительно остановлена, можно снять зависшую блокировку.`
+       : '';
+     $('vpb-alert').classList.toggle('vpb-hidden', !alertText && !pending.length && !activeBlock);
+     $('vpb-alert').innerHTML = (alertText || (pending.length
+       ? `🔔 Палета №${pending[0].pallet} готова — внесите фактический расход по секциям.`
+       : activeLockText)) + (activeBlock
+         ? ` <button type="button" class="vpb-unlock" onclick="window.vpbForceUnlock()">🔓 Снять блокировку</button>`
+         : '');
      $('vpb-start').textContent = state.running
        ? '⏸ Пауза'
        : activeBlock ? '⛔ Линия уже запущена' : lockBusy ? '🔎 Проверяем…' : '▶ Запустить';
@@ -30530,18 +30654,22 @@ if (location.protocol === 'file:') {
       const rate = Math.max(0, num(b.rateKgPer1000));
       const hours = state.speed > 0 && rate > 0 ? current / rate * 1000 / state.speed / 60 : null;
       const paintPerRoll = rate > 0 ? rate * state.rollLength / 1000 : null;
+       const cumulativePaintPerRoll = m.paintBySection.slice(0, i + 1).reduce((sum, item) => sum + item.kgPerRoll, 0);
+       const finishedAfterSectionKg = m.rollKg + cumulativePaintPerRoll;
       const paintPerPaperKg = rate > 0 && m.paperKgPer1000m > 0 ? rate / m.paperKgPer1000m : null;
       const pct = Math.max(0, Math.min(100, current / cap * 100));
       const low = current <= Math.max(rate * state.palletMeters / 1000, cap * 0.15);
       return `<div class="vpb-bucket ${low ? 'vpb-low' : ''}">
-        <div class="vpb-bucket-head"><b>Секция ${i + 1}</b><span>${round(current, 2)} / ${cap} кг ${low ? '⚠️' : '✅'}</span></div>
+         <div class="vpb-bucket-head"><b>Секция ${i + 1}</b><span>${b.paintType === 'water' ? '💧 Водная' : '🎨 Пластизольная'} · ${round(current, 2)} / ${cap} кг ${low ? '⚠️' : '✅'}</span></div>
         <div class="vpb-bar"><i style="width:${pct}%"></i></div>
          <div class="vpb-grid">
+           <label class="vpb-field"><span>Тип краски</span><select id="vpb-paint-${i}" class="vpb-input vpb-select" onchange="window.vpbChange(${i},'paintType',this.value)"><option value="plastisol" ${b.paintType === 'plastisol' ? 'selected' : ''}>Пластизольная</option><option value="water" ${b.paintType === 'water' ? 'selected' : ''}>Водная</option></select></label>
            <label class="vpb-field"><span>Остаток сейчас, кг</span>${input('vpb-current-' + i, b.currentKg, `type="number" min="0" step="0.1" max="${cap}" placeholder="Например, 25" oninput="window.vpbChange(${i},'currentKg',this.value)"`)}</label>
+           <label class="vpb-field"><span>Ёмкость секции, кг</span>${input('vpb-capacity-' + i, b.capacityKg, `type="number" min="0.1" step="0.1" placeholder="${cap}" oninput="window.vpbChange(${i},'capacityKg',this.value)"`)}</label>
            <label class="vpb-field"><span>Расход нормы, кг/1000 м</span>${input('vpb-rate-' + i, b.rateKgPer1000, 'type="number" min="0" step="0.01" placeholder="Например, 3,1" oninput="window.vpbChange(' + i + ',\'rateKgPer1000\',this.value)"')}</label>
         </div>
          <div class="vpb-muted">${hours == null ? 'Заполните оба поля и скорость сверху — тогда появится прогноз.' : `Остатка примерно на ${round(hours, 1)} ч · ${round(rate * state.palletMeters / 1000, 2)} кг/палету`}</div>
-         <div class="vpb-paper">Расход: <b>${rate ? round(rate, 3) + ' кг/1000 м' : 'норма не задана'}</b>${paintPerRoll != null ? ` · <b>${round(paintPerRoll, 3)} кг/рулон</b>` : ''}${paintPerPaperKg != null ? ` · ${round(paintPerPaperKg * 1000, 1)} г краски/кг бумаги` : ''}</div>
+          <div class="vpb-paper">Расход: <b>${rate ? round(rate, 3) + ' кг/1000 м' : 'норма не задана'}</b>${paintPerRoll != null ? ` · <b>${round(paintPerRoll, 3)} кг/рулон</b>` : ''}${paintPerPaperKg != null ? ` · ${round(paintPerPaperKg * 1000, 1)} г краски/кг бумаги` : ''} · после С${i + 1}: <b>${round(finishedAfterSectionKg, 3)} кг/рулон</b></div>
       </div>`;
     }).join('');
 
@@ -30684,7 +30812,19 @@ if (location.protocol === 'file:') {
    }
   function change(index, field, value) {
     state.buckets[index][field] = value;
-    state.buckets[index].capacityKg = capacity();
+    if (field === 'paintType') {
+      const nextType = value === 'water' ? 'water' : 'plastisol';
+      const previousCapacity = num(state.buckets[index].capacityKg);
+      state.buckets[index].paintType = nextType;
+      if (previousCapacity === STANDARD_CAPACITY && nextType === 'water') state.buckets[index].capacityKg = WATER_CAPACITY;
+      if (previousCapacity === WATER_CAPACITY && nextType === 'plastisol') state.buckets[index].capacityKg = STANDARD_CAPACITY;
+      save();
+      render();
+      return;
+    }
+    if (field === 'capacityKg') {
+      state.buckets[index].capacityKg = Math.max(0.1, num(value, capacity()));
+    }
     /* Не перерисовываем весь список на каждый введённый символ:
        иначе поле теряло фокус после первой цифры. */
     save();
@@ -30710,6 +30850,38 @@ if (location.protocol === 'file:') {
     state.pendingPallet = events.some(e => e.pending);
     save(); saveEvents(); alertText = 'Фактический расход сохранён. Норма секции обновлена по последней отметке.'; render();
   }
+  async function forceUnlock() {
+    const line = lineKey(state.line || getLine());
+    const lock = blockingLock(line);
+    if (!line || !lock) { alertText = ''; render(); return; }
+    if (!window.confirm(`Линия ${line} действительно остановлена?\n\nСнять блокировку ${lockLabel(lock)} и разрешить новый запуск? Если линия работает на другом устройстве, не снимайте блокировку.`)) return;
+    const local = readRunLocks();
+    if (local[line] && (!lock.token || local[line].token === lock.token)) {
+      delete local[line];
+      writeRunLocks(local);
+    }
+    if (cloudReady()) {
+      try {
+        await pushCloudSnapshotWithRetry(remote => {
+          const current = remoteLockFor(remote, line);
+          if (!current || current.owner !== lock.owner || current.token !== lock.token) return CLOUD_PUSH_SKIP;
+          const all = remote.virtualPaintLines && typeof remote.virtualPaintLines === 'object'
+            ? remote.virtualPaintLines : {};
+          const existing = all[line] && typeof all[line] === 'object' ? all[line] : {};
+          all[line] = Object.assign({}, existing, { line, running: false, runLock: null, updatedAt: Date.now() });
+          remote.virtualPaintLines = all;
+          return 'force-released';
+        }, remote => !remoteLockFor(remote, line), 2);
+      } catch (error) {
+        alertText = 'Не удалось снять блокировку в общей базе. Проверьте связь и повторите.';
+        render();
+        return;
+      }
+    }
+    remoteRunLock = null;
+    alertText = `✅ Зависшая блокировка линии ${line} снята. Можно запускать расчёт.`;
+    render();
+  }
   function resetShift() {
     if (!window.confirm('Сбросить прогресс палеты и счётчик готовых палет? Остатки и журнал расхода сохранятся.')) return;
      const wasRunning = state.running;
@@ -30719,7 +30891,9 @@ if (location.protocol === 'file:') {
   }
   function setType() {
     state.paintType = $('vpb-paint-type').value;
-    state.buckets.forEach(b => b.capacityKg = capacity());
+    state.buckets.forEach(b => {
+      if (!(num(b.capacityKg) > 0)) b.capacityKg = capacity();
+    });
     save(); render();
   }
   function addRollPreset(value) {
@@ -30738,6 +30912,7 @@ if (location.protocol === 'file:') {
   window.vpbStartPause = startPause;
   window.vpbFinishPallet = () => finishPallet(false);
   window.vpbReset = resetShift;
+  window.vpbForceUnlock = forceUnlock;
   window.vpbSetType = setType;
   window.vpbAddRollPreset = addRollPreset;
   window.vpbOpen = open;
@@ -30751,6 +30926,7 @@ if (location.protocol === 'file:') {
 
   const style = document.createElement('style');
   style.textContent = `
+     .vpb-unlock{border:0;border-radius:9px;background:#991b1b;color:#fff;padding:7px 9px;margin-top:7px;font-size:10px;font-weight:950;cursor:pointer}
     #vpb-fab{position:fixed;right:16px;bottom:calc(124px + env(safe-area-inset-bottom));z-index:10020;border:0;border-radius:999px;background:#0f766e;color:#fff;font-weight:900;font-size:12px;padding:13px 16px;box-shadow:0 8px 24px #0f172a44;cursor:pointer}
     #vpb-modal{position:fixed;inset:0;z-index:10010;background:#0f172a99;display:flex;align-items:flex-end;justify-content:center;padding:10px}
     #vpb-modal.vpb-hidden,.vpb-hidden{display:none!important}
@@ -30783,25 +30959,27 @@ if (location.protocol === 'file:') {
       <div class="vpb-config">
         <label><span class="vpb-label">Линия</span>${input('vpb-line', state.line || getLine(), 'placeholder="№ линии"')}</label>
         <label><span class="vpb-label">Артикул</span>${input('vpb-article', state.article, 'placeholder="Артикул"')}</label>
-        <label><span class="vpb-label">Краска</span><select id="vpb-paint-type" class="vpb-input vpb-select" onchange="window.vpbSetType()"><option value="standard">Обычная · тара до 250 кг</option><option value="water">Водная · ведро до 40 кг</option></select></label>
+        <label><span class="vpb-label">Тип по умолчанию</span><select id="vpb-paint-type" class="vpb-input vpb-select" onchange="window.vpbSetType()"><option value="plastisol">Пластизольная · тара до 250 кг</option><option value="water">Водная · ведро до 40 кг</option></select></label>
         <label><span class="vpb-label">Скорость, м/мин</span>${input('vpb-speed', state.speed, 'type="number" min="0" step="0.1" placeholder="Напр. 45"')}</label>
       </div>
        <div class="vpb-actions"><button id="vpb-start" type="button" class="vpb-btn vpb-btn-primary" onclick="window.vpbStartPause()">▶ Запустить</button><button type="button" class="vpb-btn vpb-btn-muted" onclick="window.vpbFinishPallet()">✅ Палета готова</button><button type="button" class="vpb-btn vpb-btn-danger" onclick="window.vpbReset()">Сбросить прогресс</button></div>
-       <div class="vpb-quickstart"><b>Как начать:</b> укажите скорость сверху → внизу в каждой секции внесите «Остаток сейчас» и «Расход нормы» → нажмите «▶ Запустить». Если нажать «Линия поехала» в учёте хода артикула, линия, артикул и скорость подставятся сюда, а расчёт запустится автоматически. Если расход пока неизвестен, его можно добавить после первой палеты. <b>На одной линии одновременно работает только один расчёт.</b></div>
+       <div class="vpb-quickstart"><b>Как начать:</b> укажите скорость сверху → в каждой секции выберите «Пластизольная» или «Водная», внесите остаток и норму расхода → нажмите «▶ Запустить». Масса готового рулона считается как масса бумаги плюс краска всех секций. Если нажать «Линия поехала» в учёте хода артикула, линия, артикул и скорость подставятся сюда, а расчёт запустится автоматически. <b>На одной линии одновременно работает только один расчёт.</b></div>
       <div id="vpb-status" class="vpb-status" style="margin-top:10px">⏸ Расчёт остановлен</div><div class="vpb-progress"><i id="vpb-progress" style="width:0%"></i></div><div id="vpb-progress-label" class="vpb-progress-label">0% · палет готово: 0</div><div id="vpb-alert" class="vpb-alert vpb-hidden"></div>
     </div>
-     <div class="vpb-card vpb-buckets-card"><div class="vpb-section-title">🪣 1. Виртуальные ведра — здесь вводится расход <b id="vpb-total">0 кг</b></div><div class="vpb-muted">Для каждой секции заполните два поля: сколько краски осталось сейчас и сколько обычно расходуется на 1000 метров. После запуска остаток будет списываться автоматически.</div><div id="vpb-buckets"></div></div>
+       <div class="vpb-card vpb-buckets-card"><div class="vpb-section-title">🪣 1. Виртуальные ведра — остаток по секциям, всего <b id="vpb-total">0 кг</b></div><div class="vpb-muted">Для каждой секции отдельно укажите текущий остаток, её ёмкость и норму расхода. Если во второй секции краски больше, впишите её фактический вес — программа не будет приравнивать её к первой.</div><div id="vpb-buckets"></div></div>
      <div class="vpb-card"><div class="vpb-section-title">📐 2. Бумага и палета</div><div class="vpb-config" style="margin-top:8px">
       <label><span class="vpb-label">Граммаж, г/м²</span>${input('vpb-gsm', state.gsm, 'type="number" min="1" step="1"')}</label>
       <label><span class="vpb-label">Длина рулона, м</span>${input('vpb-roll-length', state.rollLength, 'type="number" min="0.1" step="0.01"')}</label>
       <label><span class="vpb-label">Ширина, м</span>${input('vpb-roll-width', state.rollWidth, 'type="number" min="0.1" step="0.01"')}</label>
+      <label><span class="vpb-label">Рулонов в палете</span>${input('vpb-roll-count', state.rollCount, 'type="number" min="1" step="1"')}</label>
+      <label><span class="vpb-label">Вес бумаги/пустого рулона, кг</span>${input('vpb-roll-weight-actual', state.rollWeightActualKg || '', 'type="number" min="0" step="0.001" placeholder="Пусто — авторасчёт')}</label>
       <label><span class="vpb-label">Палета, метров</span>${input('vpb-pallet-meters', state.palletMeters, 'type="number" min="1" step="1"')}</label>
     </div><div class="vpb-actions"><button class="vpb-btn vpb-btn-muted" onclick="window.vpbAddRollPreset(10.05)">10,05 м</button><button class="vpb-btn vpb-btn-muted" onclick="window.vpbAddRollPreset(10.20)">10,20 м</button></div><div id="vpb-paper-calc" class="vpb-paper"></div></div>
      <div class="vpb-card"><div class="vpb-section-title">📝 3. Отметки печатника после палеты</div><div class="vpb-muted">Запишите, сколько реально ушло из каждой секции. Пустые секции можно оставить пустыми.</div><div id="vpb-events"></div></div>
   </section>`;
   document.body.appendChild(modal);
 
-  const formIds = ['vpb-line', 'vpb-article', 'vpb-gsm', 'vpb-roll-length', 'vpb-roll-width', 'vpb-pallet-meters', 'vpb-speed'];
+  const formIds = ['vpb-line', 'vpb-article', 'vpb-gsm', 'vpb-roll-length', 'vpb-roll-width', 'vpb-roll-count', 'vpb-roll-weight-actual', 'vpb-pallet-meters', 'vpb-speed'];
   modal.addEventListener('input', e => {
     if (e.target && formIds.indexOf(e.target.id) >= 0) updateStateFromForm();
   });
@@ -30949,7 +31127,7 @@ if (location.protocol === 'file:') {
       <div class="vpb-muted">Формула: вес до + долив − вес после − возврат/слив. Это точнее, чем расчёт только по времени.</div>
       <div class="vpb-grid" style="margin-top:8px">
         <label><span class="vpb-label">Палета</span><select id="vpb-measure-event" class="vpb-input vpb-select"></select></label>
-        <label><span class="vpb-label">Фактический метраж, м</span><input id="vpb-actual-meters" class="vpb-input" type="number" min="1" step="0.1" value="964"></label>
+        <label><span class="vpb-label">Фактический метраж, м</span><input id="vpb-actual-meters" class="vpb-input" type="number" min="1" step="0.1" value="964.8"></label>
         <label><span class="vpb-label">Вес до, кг</span><input id="vpb-before" class="vpb-input" type="number" min="0" step="0.01"></label>
         <label><span class="vpb-label">Долив, кг</span><input id="vpb-refill" class="vpb-input" type="number" min="0" step="0.01"></label>
         <label><span class="vpb-label">Вес после, кг</span><input id="vpb-after" class="vpb-input" type="number" min="0" step="0.01"></label>
@@ -31000,7 +31178,7 @@ if (location.protocol === 'file:') {
       <div class="vpb-guide-body">
         <div class="vpb-guide-note"><b>Важно:</b> виртуальное ведро — это не датчик и не весы. Это цифровой учёт: программа списывает примерный расход по времени и скорости, а после взвешивания уточняет реальную норму.</div>
         <div class="vpb-guide-step"><b>1. Перед запуском линии</b><br>
-          Выберите тип краски, укажите линию и скорость в м/мин. В каждой секции введите текущий остаток в кг и её расход в кг на 1000 м. Если нормы ещё нет — оставьте расход пустым и внесите его после первой фактической палеты.</div>
+           Выберите тип краски, укажите линию и скорость в м/мин. В каждой секции отдельно введите текущий остаток, ёмкость секции и её расход в кг на 1000 м. Если во второй секции краски больше, укажите больший фактический остаток именно там. Если нормы ещё нет — оставьте расход пустым и внесите его после первой фактической палеты.</div>
         <div class="vpb-guide-step"><b>2. Нажмите «Запустить»</b><br>
           Пока расчёт запущен, программа каждую минуту списывает краску отдельно по каждой секции. Чем выше скорость и норма секции, тем быстрее уменьшается её виртуальное ведро. Пауза останавливает списание.</div>
         <div class="vpb-guide-step"><b>3. Когда готова палета</b><br>
@@ -31009,7 +31187,7 @@ if (location.protocol === 'file:') {
           Не исправляйте остаток вручную. В блоке «Записать долив» выберите секцию, укажите, сколько кг добавили, и нажмите «Добавить в ведро». Так сохраняется история пополнений.</div>
         <div class="vpb-guide-step"><b>5. Как получить точный расход</b><br>
           В блоке «Точный замер» укажите вес до палеты, долив, вес после палеты, возврат/слив и фактический метраж. Программа посчитает: <b>до + долив − после − возврат</b>. Этот результат используется для уточнения нормы.</div>
-        <div class="vpb-guide-example"><b>Пример:</b> в секции было 20 кг, долили 5 кг, после палеты осталось 22 кг, возврата не было. Расход = 20 + 5 − 22 = <b>3 кг</b>. При 964 м это примерно <b>3,11 кг на 1000 м</b>.</div>
+        <div class="vpb-guide-example"><b>Пример:</b> в секции было 20 кг, долили 5 кг, после палеты осталось 22 кг, возврата не было. Расход = 20 + 5 − 22 = <b>3 кг</b>. При 964,8 м это примерно <b>3,11 кг на 1000 м</b>.</div>
         <div class="vpb-guide-step"><b>Что означают остальные поля</b><br>
           Граммаж, длина и ширина рулона нужны для расчёта массы бумаги и количества рулонов. Они помогают описать палету, но масса бумаги сама по себе не является расходом краски. Для водной краски режим ограничивает виртуальное ведро значением 40 кг.</div>
         <div class="vpb-guide-note"><b>Для точности:</b> сначала работайте по прогнозу, а после каждой палеты записывайте реальные веса. Через несколько замеров средняя норма станет близкой к фактической для вашей секции, артикула и скорости.</div>
@@ -31040,10 +31218,10 @@ if (location.protocol === 'file:') {
   function updateBuckets() {
     const list = document.querySelectorAll('#vpb-buckets .vpb-bucket');
     if (!list.length) return;
-    const type = document.getElementById('vpb-paint-type');
-    const water = type && type.value === 'water';
     const running = (document.getElementById('vpb-start') || {}).textContent === '⏸ Пауза';
     list.forEach((row, index) => {
+       const sectionType = document.getElementById('vpb-paint-' + index);
+       const water = sectionType && sectionType.value === 'water';
       const currentEl = document.getElementById('vpb-current-' + index);
       const current = Math.max(0, parseFloat(String(currentEl && currentEl.value || '').replace(',', '.')) || 0);
       const max = water ? 40 : 250;
@@ -31122,7 +31300,8 @@ if (location.protocol === 'file:') {
       section: i + 1,
       currentKg: round(num($('vpb-current-' + i) && $('vpb-current-' + i).value), 3),
       rateKgPer1000: round(num($('vpb-rate-' + i) && $('vpb-rate-' + i).value), 3),
-      capacityKg: water ? 40 : 250
+      paintType: (($('vpb-paint-' + i) || {}).value === 'water') ? 'water' : 'plastisol',
+      capacityKg: round(num($('vpb-capacity-' + i) && $('vpb-capacity-' + i).value, water ? 40 : 250), 3)
     }));
     const measured = read(MEASURE_KEY, []).filter(x => x && x.consumptionKg > 0 && x.kgPer1000m > 0);
     const eventList = read(EVENTS_KEY, []);
@@ -31134,7 +31313,7 @@ if (location.protocol === 'file:') {
     const match = progressLabel.match(/([0-9]+(?:[.,][0-9]+)?)%.*?([0-9]+)\s*$/);
      return {
       line, article: (($('vpb-article') || {}).value || '').trim(),
-      paintType: water ? 'water' : 'standard',
+      paintType: water ? 'water' : 'plastisol',
       speed: round(num($('vpb-speed') && $('vpb-speed').value), 2),
       running: (($('vpb-start') || {}).textContent || '').indexOf('Пауза') >= 0,
        runLock: typeof window.vpbGetRunLock === 'function' ? window.vpbGetRunLock() : null,
@@ -31207,19 +31386,23 @@ if (location.protocol === 'file:') {
   function lineCard(s) {
     const age = Date.now() - num(s.updatedAt);
     const stale = age > 180000;
-    const cap = s.paintType === 'water' ? 40 : 250;
     const total = (s.buckets || []).reduce((sum, b) => sum + Math.max(0, num(b.currentKg)), 0);
-    const low = (s.buckets || []).filter(b => num(b.currentKg) <= Math.max(num(b.rateKgPer1000) * 0.964, cap * 0.15)).length;
+    const low = (s.buckets || []).filter(b => {
+      const cap = Math.max(0.1, num(b.capacityKg, s.paintType === 'water' ? 40 : 250));
+      return num(b.currentKg) <= Math.max(num(b.rateKgPer1000) * 0.9648, cap * 0.15);
+    }).length;
     const minutes = (s.buckets || []).map(b => s.speed > 0 && num(b.rateKgPer1000) > 0 ? num(b.currentKg) / num(b.rateKgPer1000) * 1000 / s.speed : null).filter(x => x != null && x >= 0);
     const soon = minutes.length ? Math.min(...minutes) : null;
     const status = stale ? '⚪ нет свежего сигнала' : (s.running ? '🟢 линия работает' : '⏸ линия остановлена');
+    const typeSummary = [...new Set((s.buckets || []).map(b => b.paintType === 'water' ? 'водная' : 'пластизольная'))].join(' + ');
     const bucketHtml = (s.buckets || []).map(b => {
+      const cap = Math.max(0.1, num(b.capacityKg, s.paintType === 'water' ? 40 : 250));
       const current = Math.max(0, num(b.currentKg)), pct = Math.max(0, Math.min(100, current / cap * 100));
-      const isLow = current <= Math.max(num(b.rateKgPer1000) * 0.964, cap * 0.15);
+      const isLow = current <= Math.max(num(b.rateKgPer1000) * 0.9648, cap * 0.15);
       return `<div class="vpd-mini"><div><span>С${b.section}</span><b>${round(current, 2)} кг</b></div><i class="${isLow ? 'vpd-mini-low' : ''}" style="width:${pct}%"></i></div>`;
     }).join('');
     return `<article class="vpd-line-card ${stale ? 'vpd-stale' : ''}">
-      <div class="vpd-line-head"><div><b>Линия ${esc(s.line)}</b><span>${esc(s.article || 'артикул не указан')} · ${s.paintType === 'water' ? '💧 водная, 40 кг' : '🎨 обычная, 250 кг'}</span></div><strong>${status}</strong></div>
+       <div class="vpd-line-head"><div><b>Линия ${esc(s.line)}</b><span>${esc(s.article || 'артикул не указан')} · ${esc(typeSummary || 'тип не указан')}</span></div><strong>${status}</strong></div>
       <div class="vpd-stats"><div><b>${round(total, 2)} кг</b><span>остаток всего</span></div><div><b>${s.speed > 0 ? round(s.speed, 1) : '—'}</b><span>м/мин</span></div><div><b>${soon == null ? '—' : round(soon / 60, 1) + ' ч'}</b><span>до малого остатка</span></div><div><b>${s.avgKgPer1000m > 0 ? round(s.avgKgPer1000m, 2) : '—'}</b><span>кг/1000 м факт</span></div></div>
       <div class="vpd-progress"><i style="width:${Math.max(0, Math.min(100, num(s.progress)))}%"></i></div><div class="vpd-progress-label">Палета: ${round(num(s.progress), 1)}% · готово палет: ${round(num(s.completedPallets), 0)}${s.pendingPallets ? ` · 🔔 отметить: ${s.pendingPallets}` : ''}</div>
       <div class="vpd-buckets">${bucketHtml}</div>
@@ -31236,7 +31419,10 @@ if (location.protocol === 'file:') {
       ? '🟢 Общая база подключена — данные могут приходить с телефонов всех линий.'
       : '🟡 Общая база не настроена — сейчас видны данные только с этого устройства.';
     const total = rows.reduce((sum, s) => sum + (s.buckets || []).reduce((x, b) => x + Math.max(0, num(b.currentKg)), 0), 0);
-    const alerts = rows.reduce((sum, s) => sum + (s.buckets || []).filter(b => num(b.currentKg) <= Math.max(num(b.rateKgPer1000) * 0.964, (s.paintType === 'water' ? 40 : 250) * 0.15)).length, 0);
+     const alerts = rows.reduce((sum, s) => sum + (s.buckets || []).filter(b => {
+       const cap = Math.max(0.1, num(b.capacityKg, s.paintType === 'water' ? 40 : 250));
+       return num(b.currentKg) <= Math.max(num(b.rateKgPer1000) * 0.9648, cap * 0.15);
+     }).length, 0);
     $('vpd-summary').innerHTML = `<b>${rows.length}</b> линий · <b>${round(total, 2)} кг</b> краски в виртуальных ведрах · <b class="${alerts ? 'vpd-red' : ''}">${alerts}</b> секций требуют внимания`;
     root.innerHTML = rows.length ? rows.map(lineCard).join('') : '<div class="vpd-empty">Пока нет данных по линиям. Откройте «🎨 Ёмкости» на каждой линии, укажите номер линии и сохраните остатки.</div>';
   }
