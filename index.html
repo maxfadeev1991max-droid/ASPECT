@@ -639,6 +639,12 @@
        даже если JS-логика в другом месте ошибочно уберёт с них "hidden". */
     body.chat-modal-open #shift-traffic-light,
     body.chat-modal-open #shift-traffic-panel { display: none !important; }
+    /* В чате нижние плавающие кнопки не нужны: на телефоне они закрывают
+       сообщения и поле ввода. После закрытия чата класс снимается, и кнопки
+       снова доступны на рабочих экранах. */
+    body.chat-modal-open #aspect-copilot-fab,
+    body.chat-modal-open #vpb-fab,
+    body.chat-modal-open #vpd-fab { display: none !important; }
     #shift-traffic-panel-body > div { padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
     #shift-traffic-panel-body > div:last-child { border-bottom: none; }
 
@@ -20103,6 +20109,7 @@ function startLineRun(prefix) {
   saveLineRuns(lineRuns);
   markLineRunPending(newRun.id);
   renderLineRunCard(prefix);
+  if (typeof window.vpbSyncWithLineRun === 'function') window.vpbSyncWithLineRun(newRun);
   lineRunsCloudSyncing = true;
   syncLineRunsToCloud(lineRuns).finally(() => { lineRunsCloudSyncing = false; });
 }
@@ -20159,7 +20166,7 @@ function setLineRunDeadline(prefix, id) {
   renderLineRunCard(prefix);
 }
 function updateLineRunSpeed(prefix, id) {
-  const run = lineRuns.find(r => r.id === id);
+  const run = lineRuns.find(r => String(r.id) === String(id));
   if (!run) return;
   const input = prompt('Новая скорость линии, м/мин:', run.speedMPerMin || '');
   const val = parseFloat((input || '').replace(',', '.'));
@@ -20168,6 +20175,7 @@ function updateLineRunSpeed(prefix, id) {
   saveLineRuns(lineRuns);
   markLineRunPending(id);
   renderLineRunCard(prefix);
+  if (typeof window.vpbSyncWithLineRun === 'function') window.vpbSyncWithLineRun(run);
   lineRunsCloudSyncing = true;
   syncLineRunsToCloud(lineRuns).finally(() => { lineRunsCloudSyncing = false; });
 }
@@ -20178,20 +20186,38 @@ function updateLineRunSpeed(prefix, id) {
 // отправляет обновлённый (уже без неё) массив в общую базу — иначе через
 // пару секунд обычный опрос (checkPaintAlertOnce) вернёт её обратно с
 // телефона/другого устройства, которое ещё не знает об отмене.
-function cancelLineRun(prefix, id) {
-  const run = lineRuns.find(r => r.id === id);
+async function cancelLineRun(prefix, id) {
+  /* ID из onclick приходит строкой, а после ответа общей базы иногда
+     бывает числом. Сравниваем одинаково, иначе кнопка молча ничего не
+     делала на части устройств. */
+  const run = lineRuns.find(r => String(r.id) === String(id));
   if (!run) return;
   if (!confirm(`Отменить запуск «${run.article}» на линии ${run.line}?\nЗапись будет удалена полностью, ничего не засчитается в выработку.`)) return;
-  lineRuns = lineRuns.filter(r => r.id !== id);
+  const runId = String(run.id);
+  lineRuns = lineRuns.filter(r => String(r.id) !== runId);
   saveLineRuns(lineRuns);
-  markLineRunPendingDelete(id);
+  markLineRunPendingDelete(runId);
+  if (typeof window.vpbStopForLineRun === 'function') window.vpbStopForLineRun(run);
+  /* Сначала убираем забег из интерфейса, затем отправляем именно команду
+     удаления. pushLineRunsUpdate проверяет ответ сервера, поэтому старший
+     печатник не остаётся без объяснения, если общей базы сейчас нет. */
+  renderLineRunCard(prefix);
   lineRunsCloudSyncing = true;
-  syncLineRunsToCloud(lineRuns, [id]).finally(() => { lineRunsCloudSyncing = false; });
-  toast('Забег отменён — линия снова свободна.');
+  const synced = await pushLineRunsUpdate(lineRuns, [runId]);
+  lineRunsCloudSyncing = false;
+  if (synced) {
+    /* Даже если сервер вернул старый снимок одновременно с подтверждением,
+       локально отменённый забег не должен появляться снова. */
+    lineRuns = lineRuns.filter(r => String(r.id) !== runId);
+    saveLineRuns(lineRuns);
+    toast('✅ Забег отменён в общей базе — линия снова свободна.');
+  } else {
+    toast('⚠️ Забег отменён на этом устройстве. Общая база не подтвердила удаление — проверьте связь ☁️.');
+  }
   renderLineRunCard(prefix);
 }
 function stopLineRun(prefix, id) {
-  const run = lineRuns.find(r => r.id === id);
+  const run = lineRuns.find(r => String(r.id) === String(id));
   if (!run) return;
   run.endTs = Date.now();
   const minutes = (run.endTs - run.startTs) / 60000;
@@ -20201,6 +20227,7 @@ function stopLineRun(prefix, id) {
   run.meters = Math.round(((run.offsetMeters || 0) + speed * minutes) * 10) / 10;
   run.rolls = Math.round(run.meters / METERS_PER_ROLL * 10) / 10;
   run.pallets = Math.round(run.rolls / ROLLS_PER_PALLET * 100) / 100;
+  if (typeof window.vpbStopForLineRun === 'function') window.vpbStopForLineRun(run);
   saveLineRuns(lineRuns);
   markLineRunPending(id);
   lineRunsCloudSyncing = true;
@@ -30050,6 +30077,7 @@ if (location.protocol === 'file:') {
       completedPallets: 0,
       pendingPallet: false,
       pendingPalletNumber: 0,
+      followLineRunId: '',
        runOwner: '',
        runToken: '',
        runStartedAt: 0,
@@ -30360,9 +30388,14 @@ if (location.protocol === 'file:') {
   }
   function paperMetrics() {
     const rollKg = state.gsm * state.rollLength * state.rollWidth / 1000;
+    /* Для 1000 м бумаги: gsm (г/м²) × ширина (м) × 1000 м / 1000 =
+       gsm × ширина кг. Это позволяет честно показать краску не только
+       на метр/рулон, но и относительно массы бумаги. */
+    const paperKgPer1000m = state.gsm * state.rollWidth;
     const rolls = state.palletMeters / state.rollLength;
     return {
       rollKg,
+      paperKgPer1000m,
       rolls,
       palletPaperKg: rollKg * rolls,
       area: state.palletMeters * state.rollWidth
@@ -30374,6 +30407,53 @@ if (location.protocol === 'file:') {
       if (typeof getLineForRunPrefix === 'function') return getLineForRunPrefix('printer') || '';
     } catch (_) {}
     return (window.currentUserProfile && window.currentUserProfile.line) || '';
+  }
+  function sameLine(a, b) {
+    try {
+      if (typeof normalizeLineKey === 'function') return normalizeLineKey(a) === normalizeLineKey(b);
+    } catch (_) {}
+    return lineKey(a) === lineKey(b);
+  }
+  function activeLineRunFor(line) {
+    const runs = typeof lineRuns !== 'undefined' && Array.isArray(lineRuns) ? lineRuns : [];
+    return runs
+      .filter(run => run && !run.endTs && sameLine(run.line, line))
+      .sort((a, b) => Number(a.startTs || 0) - Number(b.startTs || 0))
+      .pop() || null;
+  }
+  function syncLineRunFields(run) {
+    if (!run || !run.line) return false;
+    state.line = String(run.line);
+    if (run.article) state.article = String(run.article);
+    const speed = num(run.speedMPerMin, 0);
+    if (speed > 0) state.speed = speed;
+    else state.speed = 0;
+    state.followLineRunId = run.id == null ? '' : String(run.id);
+    syncInput('vpb-line', state.line);
+    syncInput('vpb-article', state.article);
+    if (speed > 0) syncInput('vpb-speed', state.speed);
+    save();
+    return speed > 0;
+  }
+  function stopFollowedLineRun(run) {
+    const runId = run && run.id != null ? String(run.id) : '';
+    if (!state.followLineRunId || (runId && state.followLineRunId !== runId)) return;
+    state.followLineRunId = '';
+    if (state.running) {
+      state.running = false;
+      state.lastTickAt = null;
+      save();
+      render();
+      releaseRunLock();
+    } else {
+      save();
+      render();
+    }
+  }
+  function syncWithLineRun(run, autoStart) {
+    const hasSpeed = syncLineRunFields(run);
+    render();
+    if (autoStart && hasSpeed && !state.running && !lockBusy) startPause(String(run.id || ''));
   }
   function syncInput(id, value) {
     const el = $(id);
@@ -30430,7 +30510,8 @@ if (location.protocol === 'file:') {
     $('vpb-progress-label').textContent = `${round(progress, 1)}% · палет готово: ${state.completedPallets}`;
     $('vpb-total').textContent = `${round(totalRemaining, 2)} кг`;
     $('vpb-paper-calc').innerHTML =
-      `1 рулон: <b>${round(m.rollKg, 3)} кг</b> бумаги · ` +
+      `⚖️ Вес 1 рулона: <b>${round(m.rollKg, 3)} кг</b> · ` +
+      `бумаги на 1000 м: <b>${round(m.paperKgPer1000m, 2)} кг</b> · ` +
       `на палету: <b>${round(m.rolls, 1)} рул.</b> / <b>${round(m.palletPaperKg, 2)} кг</b> · ` +
       `${round(m.area, 1)} м²`;
     $('vpb-alert').classList.toggle('vpb-hidden', !alertText && !pending.length);
@@ -30448,6 +30529,8 @@ if (location.protocol === 'file:') {
       const cap = b.capacityKg || capacity();
       const rate = Math.max(0, num(b.rateKgPer1000));
       const hours = state.speed > 0 && rate > 0 ? current / rate * 1000 / state.speed / 60 : null;
+      const paintPerRoll = rate > 0 ? rate * state.rollLength / 1000 : null;
+      const paintPerPaperKg = rate > 0 && m.paperKgPer1000m > 0 ? rate / m.paperKgPer1000m : null;
       const pct = Math.max(0, Math.min(100, current / cap * 100));
       const low = current <= Math.max(rate * state.palletMeters / 1000, cap * 0.15);
       return `<div class="vpb-bucket ${low ? 'vpb-low' : ''}">
@@ -30458,6 +30541,7 @@ if (location.protocol === 'file:') {
            <label class="vpb-field"><span>Расход нормы, кг/1000 м</span>${input('vpb-rate-' + i, b.rateKgPer1000, 'type="number" min="0" step="0.01" placeholder="Например, 3,1" oninput="window.vpbChange(' + i + ',\'rateKgPer1000\',this.value)"')}</label>
         </div>
          <div class="vpb-muted">${hours == null ? 'Заполните оба поля и скорость сверху — тогда появится прогноз.' : `Остатка примерно на ${round(hours, 1)} ч · ${round(rate * state.palletMeters / 1000, 2)} кг/палету`}</div>
+         <div class="vpb-paper">Расход: <b>${rate ? round(rate, 3) + ' кг/1000 м' : 'норма не задана'}</b>${paintPerRoll != null ? ` · <b>${round(paintPerRoll, 3)} кг/рулон</b>` : ''}${paintPerPaperKg != null ? ` · ${round(paintPerPaperKg * 1000, 1)} г краски/кг бумаги` : ''}</div>
       </div>`;
     }).join('');
 
@@ -30518,6 +30602,26 @@ if (location.protocol === 'file:') {
   }
   function tick() {
     if (!state.running) return;
+    /* Пока забег линии активен, скорость в ёмкостях всегда берём из
+       «Линия поехала». Если забег закончили на другом экране/устройстве,
+       не продолжаем бесконечно списывать краску после остановки линии. */
+    if (state.followLineRunId) {
+      const followedRun = activeLineRunFor(state.line || getLine());
+      if (!followedRun || String(followedRun.id) !== String(state.followLineRunId)) {
+        state.followLineRunId = '';
+        state.running = false;
+        state.lastTickAt = null;
+        save();
+        render();
+        releaseRunLock();
+        return;
+      }
+      const followedSpeed = num(followedRun.speedMPerMin, 0);
+      if (followedSpeed > 0 && followedSpeed !== state.speed) {
+        state.speed = followedSpeed;
+        syncInput('vpb-speed', state.speed);
+      }
+    }
     const t = now();
     if (!state.lastTickAt) state.lastTickAt = t;
     const deltaMinutes = Math.max(0, Math.min(5, (t - state.lastTickAt) / 60000));
@@ -30533,7 +30637,7 @@ if (location.protocol === 'file:') {
     state.lastTickAt = t;
     save(); render();
   }
-   async function startPause() {
+   async function startPause(autoRunId) {
      updateStateFromForm();
      if (state.running) {
        tick(); state.running = false; state.lastTickAt = null;
@@ -30551,6 +30655,17 @@ if (location.protocol === 'file:') {
      let claimed = false;
      try {
        claimed = await claimRunLock();
+       /* Забег могли отменить, пока шла проверка блокировки. В таком случае
+          не запускаем ёмкости уже после отмены артикула. */
+       if (autoRunId && String(state.followLineRunId) !== String(autoRunId)) {
+         if (claimed) {
+           state.running = false;
+           state.lastTickAt = null;
+           save();
+           await releaseRunLock();
+         }
+         claimed = false;
+       }
      } catch (error) {
        console.warn('[paint-lock] start check failed:', error);
        alertText = 'Не удалось проверить общую базу. Запуск отменён, чтобы не получилось двойного списания.';
@@ -30612,6 +30727,8 @@ if (location.protocol === 'file:') {
   }
   function open() {
     $('vpb-modal').classList.remove('vpb-hidden');
+    const active = activeLineRunFor(state.line || getLine());
+    if (active) syncWithLineRun(active, true);
     render();
      syncRunLock();
   }
@@ -30625,6 +30742,11 @@ if (location.protocol === 'file:') {
   window.vpbAddRollPreset = addRollPreset;
   window.vpbOpen = open;
   window.vpbClose = close;
+  /* Эти два метода связывают карточку «Ход линии» с ёмкостями. Они
+     вызываются и при старте/остановке на этом устройстве, и при открытии
+     вкладки ёмкостей, если забег уже идёт. */
+  window.vpbSyncWithLineRun = run => syncWithLineRun(run, true);
+  window.vpbStopForLineRun = run => stopFollowedLineRun(run);
    window.vpbGetRunLock = currentRunLock;
 
   const style = document.createElement('style');
@@ -30665,7 +30787,7 @@ if (location.protocol === 'file:') {
         <label><span class="vpb-label">Скорость, м/мин</span>${input('vpb-speed', state.speed, 'type="number" min="0" step="0.1" placeholder="Напр. 45"')}</label>
       </div>
        <div class="vpb-actions"><button id="vpb-start" type="button" class="vpb-btn vpb-btn-primary" onclick="window.vpbStartPause()">▶ Запустить</button><button type="button" class="vpb-btn vpb-btn-muted" onclick="window.vpbFinishPallet()">✅ Палета готова</button><button type="button" class="vpb-btn vpb-btn-danger" onclick="window.vpbReset()">Сбросить прогресс</button></div>
-       <div class="vpb-quickstart"><b>Как начать:</b> укажите скорость сверху → внизу в каждой секции внесите «Остаток сейчас» и «Расход нормы» → нажмите «▶ Запустить». Если расход пока неизвестен, его можно добавить после первой палеты. <b>На одной линии одновременно работает только один расчёт.</b></div>
+       <div class="vpb-quickstart"><b>Как начать:</b> укажите скорость сверху → внизу в каждой секции внесите «Остаток сейчас» и «Расход нормы» → нажмите «▶ Запустить». Если нажать «Линия поехала» в учёте хода артикула, линия, артикул и скорость подставятся сюда, а расчёт запустится автоматически. Если расход пока неизвестен, его можно добавить после первой палеты. <b>На одной линии одновременно работает только один расчёт.</b></div>
       <div id="vpb-status" class="vpb-status" style="margin-top:10px">⏸ Расчёт остановлен</div><div class="vpb-progress"><i id="vpb-progress" style="width:0%"></i></div><div id="vpb-progress-label" class="vpb-progress-label">0% · палет готово: 0</div><div id="vpb-alert" class="vpb-alert vpb-hidden"></div>
     </div>
      <div class="vpb-card vpb-buckets-card"><div class="vpb-section-title">🪣 1. Виртуальные ведра — здесь вводится расход <b id="vpb-total">0 кг</b></div><div class="vpb-muted">Для каждой секции заполните два поля: сколько краски осталось сейчас и сколько обычно расходуется на 1000 метров. После запуска остаток будет списываться автоматически.</div><div id="vpb-buckets"></div></div>
