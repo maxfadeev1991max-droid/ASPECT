@@ -17,10 +17,10 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
   <style>
     body { font-family: 'Inter', system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; letter-spacing: -0.005em; }
-    .font-black, .font-bold, h1, h2, h3 { font-family: 'Manrope', 'Inter', system-ui, sans-serif; }
+    .font-black, .font-bold, h1, h2, h3 { font-family: 'Space Grotesk', 'Manrope', 'Inter', system-ui, sans-serif; }
     .color-preview { box-shadow: 0 10px 30px rgba(0,0,0,0.15); cursor: crosshair; position: relative; overflow: hidden; border-radius: 2rem; border: 4px solid white; height: 19rem; transition: all 0.25s ease; }
     .color-preview.is-fullscreen { position: fixed !important; top: 6vh; left: 4vw; right: 4vw; height: 82vh; z-index: 70; border-radius: 1.5rem; }
     .expand-btn { position: absolute; z-index: 30; top: 10px; right: 10px; width: 34px; height: 34px; border-radius: 9999px; background: rgba(0,0,0,0.45); color: white; display: flex; align-items: center; justify-content: center; font-size: 16px; }
@@ -236,15 +236,19 @@
 
     .brand-underline {
       width: 0; height: 3px; border-radius: 3px;
-      background: linear-gradient(90deg,#0c7885,#14a3b3,#5fd4e0,#14a3b3,#0c7885);
+      background: linear-gradient(90deg,#0c7885,#14a3b3,#c8c26d,#14a3b3,#0c7885);
       animation: brandUnderline 0.8s ease 1.25s forwards;
     }
     @keyframes brandUnderline { to { width: min(58vw, 230px); } }
 
+    /* Подпись под логотипом — тёплый золотисто-оливковый акцент (эстетика
+       витрины-шоурума) вместо ровного бирюзового, курсив serif на слове
+       "цех" отсылает к их же приёму (Instrument Serif italic на ключевом слове). */
     .brand-sub {
-      color: #7fe0ea; font-size: 12px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--aspect-gold); font-size: 12px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
       opacity: 0; animation: brandFadeUp 0.6s ease 1.55s forwards;
     }
+    .brand-sub em { font-family: 'Instrument Serif', serif; font-style: italic; font-weight: 400; letter-spacing: 0; text-transform: none; color: #e7e0c9; }
     @keyframes brandFadeUp { from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:translateY(0);} }
 
     .brand-dots { display: flex; gap: 7px; opacity: 0; animation: brandFadeUp 0.5s ease 1.9s forwards; }
@@ -302,6 +306,13 @@
       --shadow-card: 0 1px 2px rgba(11,30,36,0.04), 0 10px 26px -14px rgba(11,30,36,0.22);
       --shadow-card-lg: 0 4px 10px rgba(11,30,36,0.06), 0 20px 44px -18px rgba(11,30,36,0.28);
       --shadow-pop: 0 10px 24px -8px rgba(15,153,168,0.45);
+      /* --- тёплый акцент из витрины-шоурума (aspect-ru-showroom): золотисто-оливковый
+         и терракотовый — используются точечно поверх фирменного бирюзового, а не
+         вместо него (заставка, крупные заголовки разделов, акцентные слова serif-курсивом). --- */
+      --aspect-gold: #c8c26d;
+      --aspect-gold-dark: #a89a3f;
+      --aspect-terracotta: #bf7357;
+      --aspect-cream: #f1ebdf;
     }
     .bg-blue-700 { background-color: var(--aspect-teal) !important; }
     .bg-blue-600 { background-color: var(--aspect-teal-dark) !important; }
@@ -316,6 +327,13 @@
     .border-blue-100 { border-color: #cdeef2 !important; }
     .shadow-blue-100 { --tw-shadow-color: #cdeef2 !important; }
     body.dark-theme .bg-blue-50 { background-color: rgba(20,163,179,0.12) !important; }
+    /* bg/text/border-blue-500 — единственный оттенок синего, оставшийся
+       "родным" Tailwind-blue (не переопределён вместе с 700/600/400/300/200/50):
+       используется как обычный информационный акцент (прогресс-бары, счётчики,
+       переключатель роли на логине) — подтягиваем к фирменному бирюзовому. */
+    .bg-blue-500 { background-color: var(--aspect-teal) !important; }
+    .text-blue-500 { color: var(--aspect-teal-dark) !important; }
+    .border-blue-500 { border-color: var(--aspect-teal) !important; }
 
     /* ============================================================
        ПРЕМИУМ-РЕДИЗАЙН — общий визуальный слой поверх Tailwind CDN.
@@ -384,6 +402,10 @@
       pointer-events: none;
     }
     .app-header > * { position: relative; z-index: 1; }
+    /* Название бренда в шапке: акцентная часть ".РУ" — тёплое золото вместо
+       бирюзового (эстетика шоурума), сам заголовок — Space Grotesk. */
+    .app-title-wrap h1 { font-family: 'Space Grotesk', 'Manrope', sans-serif; }
+    .app-title-wrap .text-blue-300 { color: var(--aspect-gold) !important; }
     .brand-mark {
       width: 34px; height: 34px; border-radius: 0.85rem; flex: 0 0 auto;
       background: linear-gradient(145deg, #ffffff 0%, #d9f4f7 100%);
@@ -897,6 +919,58 @@
   }
   #paint-predictor-wrap { scroll-margin-top: 12px; }
 
+  /* ============================================================
+     ФАЗА 3 — фирменный акцент «обойная фабрика» + донастройка цвета
+     на тех немногих виджетах, что ещё жили на нейтральном тёмно-сером
+     вместо палитры АСПЕКТ.РУ (светофор смены, горячие клавиши, лупа
+     пипетки). Тот же приём, что и раньше: только CSS поверх готовой
+     разметки, ничего в тысячах мест шаблона не переписываем.
+     ============================================================ */
+
+  /* Тонкая "рулонная" текстура — вертикальные полосы, как обойный рулон,
+     едва заметные, поверх фирменного градиента шапки и заставки. Не спорит
+     с существующим бликом (::after) и не мешает читаемости текста. */
+  .app-header::before {
+    content: "";
+    position: absolute; inset: 0;
+    background-image: repeating-linear-gradient(
+      90deg,
+      rgba(255,255,255,0.05) 0px,
+      rgba(255,255,255,0.05) 2px,
+      transparent 2px,
+      transparent 26px
+    );
+    pointer-events: none;
+  }
+  #brand-splash::before {
+    content: "";
+    position: absolute; inset: 0;
+    background-image: repeating-linear-gradient(
+      90deg,
+      rgba(95,212,224,0.06) 0px,
+      rgba(95,212,224,0.06) 3px,
+      transparent 3px,
+      transparent 34px
+    );
+    pointer-events: none;
+  }
+
+  /* Светофор смены, подсказка горячих клавиш, лупа пипетки — переводим
+     с общего rgba(17,17,17,..) на фирменный тёмно-бирюзовый чернильный
+     тон (--aspect-ink), чтобы даже плавающие служебные виджеты читались
+     как часть одного фирменного стиля, а не как случайный "системный серый". */
+  #shift-traffic-light,
+  #shift-traffic-panel,
+  #kbd-shortcut-hint,
+  .adv-picker-readout {
+    background: linear-gradient(160deg, rgba(11,30,36,0.94), rgba(12,120,133,0.86)) !important;
+    box-shadow: 0 10px 26px -10px rgba(11,30,36,0.55), 0 0 0 1px rgba(255,255,255,0.08) !important;
+  }
+  .kbd-key { background: var(--aspect-ink); border-bottom-color: #051216; }
+
+  /* Плашка загрузки/лупы пипетки — тот же фирменный тёмный, вместо чистого #111. */
+  .adv-picker-magnifier { background: var(--aspect-ink); }
+
 </style>
 </head>
 <body class="bg-slate-100 min-h-screen pb-20 transition-all duration-500" id="main-body">
@@ -926,7 +1000,7 @@
     <div class="brand-shine"></div>
   </div>
   <div class="brand-underline"></div>
-  <div class="brand-sub">AspectRu · цех производства</div>
+  <div class="brand-sub">AspectRu · <em>цех производства</em></div>
   <div class="brand-dots">
     <span></span><span></span><span></span><span></span><span></span><span></span>
   </div>
