@@ -4695,6 +4695,7 @@ async function fetchCloudSnapshotRaw_() {
      // Текущий остаток краски по линии/секциям. Храним отдельно от
      // paintRequests: это оперативное состояние печатника, а не заявка.
      paintPredictor: (data.paintPredictor && typeof data.paintPredictor === 'object') ? data.paintPredictor : {},
+     virtualPaintLines: (data.virtualPaintLines && typeof data.virtualPaintLines === 'object') ? data.virtualPaintLines : {},
     prelaunchLog: Array.isArray(data.prelaunchLog) ? data.prelaunchLog : [],
     shiftHandovers: Array.isArray(data.shiftHandovers) ? data.shiftHandovers : [],
     resourceCounters: data.resourceCounters || {},
@@ -4784,6 +4785,10 @@ async function pushCloudSnapshot(record) {
     }
   }
   if (out && out.ok === false) throw new Error(out.error || 'Ошибка записи в таблицу');
+   /* После записи следующий fetch должен увидеть именно новую блокировку,
+      а не старый coalesce-кэш предыдущего чтения. */
+   _cloudSnapshotCache = null;
+   _cloudSnapshotCacheAt = 0;
   return true;
 }
 
@@ -30011,6 +30016,9 @@ if (location.protocol === 'file:') {
   const STANDARD_CAPACITY = 250;
   const WATER_CAPACITY = 40;
   const DEFAULT_PALLET_METERS = 964;
+   const RUN_LOCKS_KEY = 'aspect_virtual_paint_run_locks_v1';
+   const RUN_OWNER_KEY = 'aspect_virtual_paint_run_owner_v1';
+   const RUN_LEASE_MS = 18000;
 
   const $ = id => document.getElementById(id);
   const num = (value, fallback = 0) => {
@@ -30042,6 +30050,10 @@ if (location.protocol === 'file:') {
       completedPallets: 0,
       pendingPallet: false,
       pendingPalletNumber: 0,
+       runOwner: '',
+       runToken: '',
+       runStartedAt: 0,
+       runLeaseUntil: 0,
       buckets: Array.from({ length: SECTIONS }, (_, i) => ({
         section: i + 1, currentKg: '', rateKgPer1000: '', capacityKg: STANDARD_CAPACITY
       }))
@@ -30091,6 +30103,257 @@ if (location.protocol === 'file:') {
   let events = loadEvents();
   let tickTimer = null;
   let alertText = '';
+   let lockBusy = false;
+   let remoteRunLock = null;
+   let remoteCheckedAt = 0;
+   let lockSyncInFlight = false;
+
+   function readRunLocks() {
+     try {
+       const value = JSON.parse(localStorage.getItem(RUN_LOCKS_KEY) || '{}');
+       return value && typeof value === 'object' ? value : {};
+     } catch (_) { return {}; }
+   }
+   function writeRunLocks(value) {
+     try { localStorage.setItem(RUN_LOCKS_KEY, JSON.stringify(value || {})); } catch (_) {}
+   }
+   function ownerId() {
+     try {
+       /* sessionStorage отличает две открытые вкладки на одном компьютере,
+          но сохраняет владельца при обычном обновлении этой вкладки. */
+       const stored = sessionStorage.getItem(RUN_OWNER_KEY);
+       if (stored) return stored;
+       const device = typeof getFedDeviceId === 'function' ? getFedDeviceId() : '';
+       const value = (device ? 'device-' + device : 'browser-') + '-' + Math.random().toString(36).slice(2, 10);
+       sessionStorage.setItem(RUN_OWNER_KEY, value);
+       return value;
+     } catch (_) { return 'browser-' + Math.random().toString(36).slice(2, 10); }
+   }
+   const THIS_OWNER = ownerId();
+   function personName() {
+     try { return (window.currentUserProfile && window.currentUserProfile.name) || 'другое устройство'; }
+     catch (_) { return 'другое устройство'; }
+   }
+   function lockIsActive(lock) {
+     return !!(lock && lock.running !== false && Number(lock.leaseUntil || 0) > Date.now());
+   }
+   function lockLabel(lock) {
+     return (lock && lock.user) || 'другой пользователь';
+   }
+   function lineKey(line) {
+     return String(line == null ? '' : line).trim();
+   }
+   function localLockFor(line) {
+     const lock = readRunLocks()[lineKey(line)];
+     return lockIsActive(lock) ? lock : null;
+   }
+   function legacyRemoteLock(entry) {
+     /* Старые клиенты ещё не знали runLock. На короткое время считаем
+        свежую запись running=true занятой, чтобы обновление прошло безопасно. */
+     if (entry && entry.running === true && Date.now() - Number(entry.updatedAt || 0) < RUN_LEASE_MS * 2) {
+       return { owner: 'legacy-device', user: 'другое устройство', token: 'legacy', leaseUntil: Number(entry.updatedAt || Date.now()) + RUN_LEASE_MS * 2, running: true };
+     }
+     return null;
+   }
+   function remoteLockFor(remote, line) {
+     const entry = remote && remote.virtualPaintLines && remote.virtualPaintLines[lineKey(line)];
+     if (!entry) return null;
+     return lockIsActive(entry.runLock) ? entry.runLock : legacyRemoteLock(entry);
+   }
+   function blockingLock(line) {
+     const key = lineKey(line);
+     const local = localLockFor(key);
+     if (local && local.owner !== THIS_OWNER) return local;
+     const remote = remoteRunLock && remoteRunLock.line === key ? remoteRunLock : null;
+     if (remote && remote.owner !== THIS_OWNER && lockIsActive(remote)) return remote;
+     return null;
+   }
+   function currentRunLock() {
+     const line = lineKey(state.line || getLine());
+     if (!state.running || !line) return null;
+     return {
+       line,
+       owner: state.runOwner || THIS_OWNER,
+       token: state.runToken || '',
+       user: personName(),
+       running: true,
+       startedAt: Number(state.runStartedAt || Date.now()),
+       leaseUntil: Date.now() + RUN_LEASE_MS
+     };
+   }
+   function saveLocalRunLock(lock) {
+     const all = readRunLocks();
+     if (lock) all[lineKey(lock.line)] = lock;
+     else delete all[lineKey(state.line || getLine())];
+     writeRunLocks(all);
+   }
+   function cloudReady() {
+     try {
+       const cfg = typeof loadSheetDbConfig === 'function' ? (sheetDbConfig || loadSheetDbConfig()) : null;
+       return !!(cfg && cfg.url && typeof fetchCloudSnapshot === 'function' && typeof pushCloudSnapshotWithRetry === 'function');
+     } catch (_) { return false; }
+   }
+   async function publishRunLock(lock) {
+     const key = lineKey(lock && lock.line);
+     if (!key || !cloudReady()) return { ok: true, localOnly: true };
+     try {
+       const result = await pushCloudSnapshotWithRetry(remote => {
+         const all = remote.virtualPaintLines && typeof remote.virtualPaintLines === 'object'
+           ? remote.virtualPaintLines : {};
+         const existing = remoteLockFor(remote, key);
+         if (existing && existing.owner !== THIS_OWNER && lockIsActive(existing)) {
+           return CLOUD_PUSH_SKIP;
+         }
+         const current = all[key] && typeof all[key] === 'object' ? all[key] : {};
+         all[key] = Object.assign({}, current, {
+           line: key,
+           running: !!lock,
+           runLock: lock || null,
+           updatedAt: Date.now()
+         });
+         remote.virtualPaintLines = all;
+         return lock ? lock.token : 'released';
+       }, remote => {
+         const current = remoteLockFor(remote, key);
+         return lock
+           ? !!(current && current.owner === THIS_OWNER && current.token === lock.token && lockIsActive(current))
+           : !current || current.owner === THIS_OWNER;
+       }, 3);
+       if (result && result.skipped) {
+         return { ok: false, conflict: true, lock: remoteLockFor(result.remote, key) };
+       }
+       const confirmed = result && result.remote ? remoteLockFor(result.remote, key) : null;
+       if (lock && (!confirmed || confirmed.owner !== THIS_OWNER || confirmed.token !== lock.token)) {
+         return { ok: false, conflict: true, lock: confirmed };
+       }
+       return { ok: true, remote: result && result.remote };
+     } catch (error) {
+       console.warn('[paint-lock] cloud lock failed:', error);
+       return { ok: false, offline: true, error };
+     }
+   }
+   async function claimRunLock() {
+     const line = lineKey(state.line || getLine());
+     if (!line) {
+       alertText = 'Укажите номер линии — блокировка запуска привязана к линии.';
+       render();
+       return false;
+     }
+     const local = localLockFor(line);
+     if (local && local.owner !== THIS_OWNER) {
+       alertText = `Линия ${line} уже запущена: ${lockLabel(local)}. Сначала остановите расчёт на другом устройстве.`;
+       render();
+       return false;
+     }
+     if (cloudReady()) {
+       try {
+         const remote = await fetchCloudSnapshot();
+         remoteRunLock = remoteLockFor(remote, line);
+         remoteCheckedAt = Date.now();
+         const blocking = blockingLock(line);
+         if (blocking) {
+           alertText = `Линия ${line} уже запущена: ${lockLabel(blocking)}. Второй расчёт не запущен.`;
+           render();
+           return false;
+         }
+       } catch (error) {
+         alertText = 'Не удалось проверить общую базу. Запуск отменён, чтобы не получилось двойного списания.';
+         render();
+         return false;
+       }
+     }
+     const lock = {
+       line,
+       owner: THIS_OWNER,
+       token: String(Date.now()) + '-' + Math.random().toString(36).slice(2, 10),
+       user: personName(),
+       running: true,
+       startedAt: Date.now(),
+       leaseUntil: Date.now() + RUN_LEASE_MS
+     };
+     saveLocalRunLock(lock);
+     const published = await publishRunLock(lock);
+     if (!published.ok) {
+       const all = readRunLocks();
+       if (all[line] && all[line].token === lock.token) { delete all[line]; writeRunLocks(all); }
+       remoteRunLock = published.lock || remoteRunLock;
+       alertText = published.offline
+         ? 'Общая база недоступна. Запуск отменён, чтобы два устройства не списывали краску одновременно.'
+         : `Линия ${line} уже занята другим запуском. Ваш запуск не начат.`;
+       render();
+       return false;
+     }
+     state.line = line;
+     state.runOwner = THIS_OWNER;
+     state.runToken = lock.token;
+     state.runStartedAt = lock.startedAt;
+     state.runLeaseUntil = lock.leaseUntil;
+     state.running = true;
+     state.lastTickAt = now();
+     save();
+     return true;
+   }
+   async function releaseRunLock() {
+     const line = lineKey(state.line || getLine());
+     const token = state.runToken;
+     const all = readRunLocks();
+     if (all[line] && (!token || all[line].token === token)) {
+       delete all[line]; writeRunLocks(all);
+     }
+     state.runOwner = ''; state.runToken = ''; state.runStartedAt = 0; state.runLeaseUntil = 0;
+     if (!line || !cloudReady()) return;
+     try {
+       await pushCloudSnapshotWithRetry(remote => {
+         const current = remoteLockFor(remote, line);
+         if (current && current.owner !== THIS_OWNER) return CLOUD_PUSH_SKIP;
+         const allLines = remote.virtualPaintLines && typeof remote.virtualPaintLines === 'object'
+           ? remote.virtualPaintLines : {};
+         const existing = allLines[line] && typeof allLines[line] === 'object' ? allLines[line] : {};
+         allLines[line] = Object.assign({}, existing, { line, running: false, runLock: null, updatedAt: Date.now() });
+         remote.virtualPaintLines = allLines;
+         return 'released';
+       }, remote => {
+         const current = remoteLockFor(remote, line);
+         return !current || current.owner === THIS_OWNER;
+       }, 3);
+     } catch (error) {
+       console.warn('[paint-lock] release failed:', error);
+     }
+   }
+   async function syncRunLock() {
+     if (lockSyncInFlight || !cloudReady()) return;
+     const line = lineKey(state.line || getLine());
+     if (!line) return;
+     lockSyncInFlight = true;
+     try {
+       const previous = remoteRunLock ? `${remoteRunLock.owner}:${remoteRunLock.token}` : '';
+       const remote = await fetchCloudSnapshot();
+       remoteRunLock = remoteLockFor(remote, line);
+       remoteCheckedAt = Date.now();
+       if (state.running && remoteRunLock && remoteRunLock.owner !== THIS_OWNER) {
+         state.running = false;
+         state.lastTickAt = null;
+         state.runOwner = ''; state.runToken = ''; state.runStartedAt = 0; state.runLeaseUntil = 0;
+         const locks = readRunLocks();
+         if (locks[line] && locks[line].owner === THIS_OWNER) { delete locks[line]; writeRunLocks(locks); }
+         alertText = `⚠️ Расчёт остановлен: линию ${line} уже занял ${lockLabel(remoteRunLock)}.`;
+         save(); render();
+       } else if (state.running) {
+         const lock = currentRunLock();
+         if (lock) {
+           saveLocalRunLock(lock);
+           await publishRunLock(lock);
+         }
+       } else {
+         const current = remoteRunLock ? `${remoteRunLock.owner}:${remoteRunLock.token}` : '';
+         if (previous !== current) render();
+       }
+     } catch (error) {
+       console.warn('[paint-lock] cloud check failed:', error);
+     } finally {
+       lockSyncInFlight = false;
+     }
+   }
 
   function capacity() {
     return state.paintType === 'water' ? WATER_CAPACITY : STANDARD_CAPACITY;
@@ -30138,7 +30401,9 @@ if (location.protocol === 'file:') {
     return `<input id="${id}" value="${esc(value)}" ${attrs || ''} class="vpb-input">`;
   }
   function render() {
-    const root = $('vpb-root');
+     /* В модуле не было отдельного vpb-root: из-за этого render() сразу
+        завершался и не обновлял ни статус, ни виртуальные ведра, ни кнопку. */
+     const root = $('vpb-sheet');
     if (!root) return;
     const m = paperMetrics();
     const totalRemaining = state.buckets.reduce((sum, b) => sum + Math.max(0, num(b.currentKg)), 0);
@@ -30153,9 +30418,14 @@ if (location.protocol === 'file:') {
     syncInput('vpb-speed', state.speed);
     if ($('vpb-paint-type')) $('vpb-paint-type').value = state.paintType;
 
-    $('vpb-status').innerHTML = state.running
-      ? `<span class="vpb-dot"></span> Идёт расчёт · ${round(state.palletProgress, 1)} / ${round(state.palletMeters, 1)} м`
-      : '⏸ Расчёт остановлен — нажмите «Запустить»';
+     const activeBlock = !state.running ? blockingLock(lineKey(state.line || getLine())) : null;
+     $('vpb-status').innerHTML = state.running
+       ? `<span class="vpb-dot"></span> Идёт расчёт · ${round(state.palletProgress, 1)} / ${round(state.palletMeters, 1)} м`
+       : activeBlock
+         ? `🔒 Линия занята · запустил ${esc(lockLabel(activeBlock))}`
+         : lockBusy
+           ? '🔎 Проверяем, не запущена ли линия на другом устройстве…'
+           : '⏸ Расчёт остановлен — нажмите «Запустить»';
     $('vpb-progress').style.width = progress + '%';
     $('vpb-progress-label').textContent = `${round(progress, 1)}% · палет готово: ${state.completedPallets}`;
     $('vpb-total').textContent = `${round(totalRemaining, 2)} кг`;
@@ -30167,8 +30437,11 @@ if (location.protocol === 'file:') {
     $('vpb-alert').innerHTML = alertText || (pending.length
       ? `🔔 Палета №${pending[0].pallet} готова — внесите фактический расход по секциям.`
       : '');
-    $('vpb-start').textContent = state.running ? '⏸ Пауза' : '▶ Запустить';
-    $('vpb-start').className = 'vpb-btn ' + (state.running ? 'vpb-btn-pause' : 'vpb-btn-primary');
+     $('vpb-start').textContent = state.running
+       ? '⏸ Пауза'
+       : activeBlock ? '⛔ Линия уже запущена' : lockBusy ? '🔎 Проверяем…' : '▶ Запустить';
+     $('vpb-start').className = 'vpb-btn ' + (state.running ? 'vpb-btn-pause' : activeBlock ? 'vpb-btn-locked' : 'vpb-btn-primary');
+     $('vpb-start').disabled = !!lockBusy || !!activeBlock;
 
     $('vpb-buckets').innerHTML = state.buckets.map((b, i) => {
       const current = Math.max(0, num(b.currentKg));
@@ -30180,11 +30453,11 @@ if (location.protocol === 'file:') {
       return `<div class="vpb-bucket ${low ? 'vpb-low' : ''}">
         <div class="vpb-bucket-head"><b>Секция ${i + 1}</b><span>${round(current, 2)} / ${cap} кг ${low ? '⚠️' : '✅'}</span></div>
         <div class="vpb-bar"><i style="width:${pct}%"></i></div>
-        <div class="vpb-grid">
-          ${input('vpb-current-' + i, b.currentKg, `type="number" min="0" step="0.1" max="${cap}" placeholder="Остаток, кг" oninput="window.vpbChange(${i},'currentKg',this.value)"`)}
-          ${input('vpb-rate-' + i, b.rateKgPer1000, 'type="number" min="0" step="0.01" placeholder="Расход, кг/1000 м" oninput="window.vpbChange(' + i + ',\'rateKgPer1000\',this.value)"')}
+         <div class="vpb-grid">
+           <label class="vpb-field"><span>Остаток сейчас, кг</span>${input('vpb-current-' + i, b.currentKg, `type="number" min="0" step="0.1" max="${cap}" placeholder="Например, 25" oninput="window.vpbChange(${i},'currentKg',this.value)"`)}</label>
+           <label class="vpb-field"><span>Расход нормы, кг/1000 м</span>${input('vpb-rate-' + i, b.rateKgPer1000, 'type="number" min="0" step="0.01" placeholder="Например, 3,1" oninput="window.vpbChange(' + i + ',\'rateKgPer1000\',this.value)"')}</label>
         </div>
-        <div class="vpb-muted">${hours == null ? 'Введите расход и скорость для прогноза' : `Остатка примерно на ${round(hours, 1)} ч · ${round(rate * state.palletMeters / 1000, 2)} кг/палету`}</div>
+         <div class="vpb-muted">${hours == null ? 'Заполните оба поля и скорость сверху — тогда появится прогноз.' : `Остатка примерно на ${round(hours, 1)} ч · ${round(rate * state.palletMeters / 1000, 2)} кг/палету`}</div>
       </div>`;
     }).join('');
 
@@ -30260,23 +30533,35 @@ if (location.protocol === 'file:') {
     state.lastTickAt = t;
     save(); render();
   }
-  function startPause() {
-    updateStateFromForm();
-    if (state.running) {
-      tick(); state.running = false; state.lastTickAt = null;
-    } else {
-      if (!(state.speed > 0)) { alertText = 'Введите скорость линии, м/мин — тогда расход будет списываться по времени.'; render(); return; }
-      state.running = true; state.lastTickAt = now();
-      if (window.Notification && Notification.permission === 'default') {
-        try { Notification.requestPermission(); } catch (_) {}
-      }
-    }
-    save(); render();
-  }
+   async function startPause() {
+     updateStateFromForm();
+     if (state.running) {
+       tick(); state.running = false; state.lastTickAt = null;
+       save(); render();
+       await releaseRunLock();
+       return;
+     }
+     if (lockBusy) return;
+     if (!(state.speed > 0)) {
+       alertText = 'Введите скорость линии, м/мин — тогда расход будет списываться по времени.';
+       render();
+       return;
+     }
+     lockBusy = true; alertText = ''; render();
+     const claimed = await claimRunLock();
+     lockBusy = false;
+     if (!claimed) return;
+     if (window.Notification && Notification.permission === 'default') {
+       try { Notification.requestPermission(); } catch (_) {}
+     }
+     save(); render();
+   }
   function change(index, field, value) {
     state.buckets[index][field] = value;
     state.buckets[index].capacityKg = capacity();
-    save(); render();
+    /* Не перерисовываем весь список на каждый введённый символ:
+       иначе поле теряло фокус после первой цифры. */
+    save();
   }
   function saveEvent(id) {
     const event = events.find(e => e.id === id);
@@ -30301,8 +30586,10 @@ if (location.protocol === 'file:') {
   }
   function resetShift() {
     if (!window.confirm('Сбросить прогресс палеты и счётчик готовых палет? Остатки и журнал расхода сохранятся.')) return;
-    state.palletProgress = 0; state.completedPallets = 0; state.running = false; state.lastTickAt = null;
-    save(); render();
+     const wasRunning = state.running;
+     state.palletProgress = 0; state.completedPallets = 0; state.running = false; state.lastTickAt = null;
+     save(); render();
+     if (wasRunning) releaseRunLock();
   }
   function setType() {
     state.paintType = $('vpb-paint-type').value;
@@ -30315,6 +30602,7 @@ if (location.protocol === 'file:') {
   function open() {
     $('vpb-modal').classList.remove('vpb-hidden');
     render();
+     syncRunLock();
   }
   function close() { $('vpb-modal').classList.add('vpb-hidden'); }
   window.vpbChange = change;
@@ -30326,6 +30614,7 @@ if (location.protocol === 'file:') {
   window.vpbAddRollPreset = addRollPreset;
   window.vpbOpen = open;
   window.vpbClose = close;
+   window.vpbGetRunLock = currentRunLock;
 
   const style = document.createElement('style');
   style.textContent = `
@@ -30339,12 +30628,13 @@ if (location.protocol === 'file:') {
     .vpb-label{display:block;font-size:10px;font-weight:900;text-transform:uppercase;color:#64748b;margin-bottom:4px}
     .vpb-input{width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:9px 10px;font-size:12px;font-weight:750;outline:none}
     .vpb-input:focus{border-color:#14b8a6;box-shadow:0 0 0 3px #14b8a622}
-    .vpb-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.vpb-config{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
-    .vpb-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.vpb-btn{border:0;border-radius:11px;padding:10px 12px;font-size:11px;font-weight:950;cursor:pointer}.vpb-btn-primary{background:#0f766e;color:#fff}.vpb-btn-pause{background:#f59e0b;color:#fff}.vpb-btn-muted{background:#e2e8f0;color:#334155}.vpb-btn-danger{background:#fee2e2;color:#991b1b}.vpb-btn-small{padding:8px 10px;margin-top:9px}
+     .vpb-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.vpb-config{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.vpb-field{display:block}.vpb-field>span{display:block;font-size:9px;font-weight:900;color:#475569;margin:0 0 4px}
+     .vpb-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.vpb-btn{border:0;border-radius:11px;padding:10px 12px;font-size:11px;font-weight:950;cursor:pointer;min-height:40px}.vpb-btn:disabled{cursor:not-allowed;opacity:.82}.vpb-btn-primary{background:#0f766e;color:#fff}.vpb-btn-pause{background:#f59e0b;color:#fff}.vpb-btn-locked{background:#475569;color:#fff}.vpb-btn-muted{background:#e2e8f0;color:#334155}.vpb-btn-danger{background:#fee2e2;color:#991b1b}.vpb-btn-small{padding:8px 10px;margin-top:9px}#vpb-start{flex:1;min-width:170px;font-size:12px;box-shadow:0 5px 12px #0f766e33}
+     .vpb-quickstart{background:#f0fdfa;border:1px solid #99f6e4;border-radius:13px;padding:9px 10px;margin-top:10px;font-size:10px;color:#115e59;line-height:1.45}.vpb-quickstart b{font-weight:950}
     .vpb-status{font-size:11px;font-weight:900;color:#0f766e;display:flex;align-items:center;gap:6px}.vpb-dot{width:8px;height:8px;border-radius:50%;background:#10b981;display:inline-block;animation:vpbPulse 1s infinite}@keyframes vpbPulse{50%{opacity:.25}}
     .vpb-progress{height:10px;background:#e2e8f0;border-radius:99px;overflow:hidden;margin-top:8px}.vpb-progress i{display:block;height:100%;background:linear-gradient(90deg,#14b8a6,#0f766e);border-radius:99px;transition:width .3s}.vpb-progress-label{font-size:10px;color:#64748b;font-weight:800;margin-top:4px}
     .vpb-alert{background:#fef2f2;border:1px solid #fca5a5;color:#b91c1c;border-radius:13px;padding:10px;font-size:11px;font-weight:900;margin-top:10px}.vpb-bucket{border:1px solid #e2e8f0;border-radius:14px;padding:10px;margin-top:8px}.vpb-bucket.vpb-low{border-color:#fca5a5;background:#fffafa}.vpb-bucket-head,.vpb-event-top{display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:11px}.vpb-bar{height:7px;background:#e2e8f0;border-radius:99px;overflow:hidden;margin:7px 0}.vpb-bar i{display:block;height:100%;background:#14b8a6;border-radius:99px}.vpb-low .vpb-bar i{background:#ef4444}.vpb-muted{font-size:10px;color:#64748b;line-height:1.4;margin-top:5px}.vpb-paper{background:#ecfeff;border:1px solid #a5f3fc;color:#155e75;border-radius:12px;padding:9px;font-size:10px;line-height:1.45;margin-top:8px}.vpb-section-title{font-size:11px;font-weight:950;text-transform:uppercase;letter-spacing:.04em;color:#334155}.vpb-event{border:1px solid #e2e8f0;border-radius:14px;padding:10px;margin-top:8px;background:#fff}.vpb-event-pending{border-color:#fca5a5;background:#fff7f7}.vpb-event-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:8px}.vpb-event-field{font-size:9px;color:#64748b;font-weight:900}.vpb-event-field input{margin-top:3px;padding:7px 5px;font-size:10px}.vpb-select{appearance:auto}
-    @media(max-width:560px){#vpb-fab{right:10px;bottom:66px}.vpb-config{grid-template-columns:repeat(2,minmax(0,1fr))}.vpb-event-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}.vpb-event-field input{font-size:9px;padding:7px 3px}.vpb-title{font-size:16px}}
+     @media(max-width:560px){#vpb-fab{right:10px;bottom:66px}.vpb-config{grid-template-columns:repeat(2,minmax(0,1fr))}.vpb-event-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}.vpb-event-field input{font-size:9px;padding:7px 3px}.vpb-title{font-size:16px}.vpb-grid{grid-template-columns:1fr}.vpb-actions .vpb-btn{flex:1}}
   `;
   document.head.appendChild(style);
 
@@ -30363,26 +30653,36 @@ if (location.protocol === 'file:') {
         <label><span class="vpb-label">Краска</span><select id="vpb-paint-type" class="vpb-input vpb-select" onchange="window.vpbSetType()"><option value="standard">Обычная · тара до 250 кг</option><option value="water">Водная · ведро до 40 кг</option></select></label>
         <label><span class="vpb-label">Скорость, м/мин</span>${input('vpb-speed', state.speed, 'type="number" min="0" step="0.1" placeholder="Напр. 45"')}</label>
       </div>
-      <div class="vpb-actions"><button id="vpb-start" class="vpb-btn vpb-btn-primary" onclick="window.vpbStartPause()">▶ Запустить</button><button class="vpb-btn vpb-btn-muted" onclick="window.vpbFinishPallet()">✅ Палета готова</button><button class="vpb-btn vpb-btn-danger" onclick="window.vpbReset()">Сбросить прогресс</button></div>
+       <div class="vpb-actions"><button id="vpb-start" type="button" class="vpb-btn vpb-btn-primary" onclick="window.vpbStartPause()">▶ Запустить</button><button type="button" class="vpb-btn vpb-btn-muted" onclick="window.vpbFinishPallet()">✅ Палета готова</button><button type="button" class="vpb-btn vpb-btn-danger" onclick="window.vpbReset()">Сбросить прогресс</button></div>
+       <div class="vpb-quickstart"><b>Как начать:</b> укажите скорость сверху → внизу в каждой секции внесите «Остаток сейчас» и «Расход нормы» → нажмите «▶ Запустить». Если расход пока неизвестен, его можно добавить после первой палеты. <b>На одной линии одновременно работает только один расчёт.</b></div>
       <div id="vpb-status" class="vpb-status" style="margin-top:10px">⏸ Расчёт остановлен</div><div class="vpb-progress"><i id="vpb-progress" style="width:0%"></i></div><div id="vpb-progress-label" class="vpb-progress-label">0% · палет готово: 0</div><div id="vpb-alert" class="vpb-alert vpb-hidden"></div>
     </div>
-    <div class="vpb-card"><div class="vpb-section-title">📐 Бумага и палета</div><div class="vpb-config" style="margin-top:8px">
+     <div class="vpb-card vpb-buckets-card"><div class="vpb-section-title">🪣 1. Виртуальные ведра — здесь вводится расход <b id="vpb-total">0 кг</b></div><div class="vpb-muted">Для каждой секции заполните два поля: сколько краски осталось сейчас и сколько обычно расходуется на 1000 метров. После запуска остаток будет списываться автоматически.</div><div id="vpb-buckets"></div></div>
+     <div class="vpb-card"><div class="vpb-section-title">📐 2. Бумага и палета</div><div class="vpb-config" style="margin-top:8px">
       <label><span class="vpb-label">Граммаж, г/м²</span>${input('vpb-gsm', state.gsm, 'type="number" min="1" step="1"')}</label>
       <label><span class="vpb-label">Длина рулона, м</span>${input('vpb-roll-length', state.rollLength, 'type="number" min="0.1" step="0.01"')}</label>
       <label><span class="vpb-label">Ширина, м</span>${input('vpb-roll-width', state.rollWidth, 'type="number" min="0.1" step="0.01"')}</label>
       <label><span class="vpb-label">Палета, метров</span>${input('vpb-pallet-meters', state.palletMeters, 'type="number" min="1" step="1"')}</label>
     </div><div class="vpb-actions"><button class="vpb-btn vpb-btn-muted" onclick="window.vpbAddRollPreset(10.05)">10,05 м</button><button class="vpb-btn vpb-btn-muted" onclick="window.vpbAddRollPreset(10.20)">10,20 м</button></div><div id="vpb-paper-calc" class="vpb-paper"></div></div>
-    <div class="vpb-card"><div class="vpb-section-title">🪣 Виртуальные ведра · всего осталось <b id="vpb-total">0 кг</b></div><div class="vpb-muted">В поле «расход» укажите норму конкретной секции. Она списывается автоматически по скорости и времени. После фактической отметки палеты норма обновляется.</div><div id="vpb-buckets"></div></div>
-    <div class="vpb-card"><div class="vpb-section-title">📝 Отметки печатника после палеты</div><div class="vpb-muted">Запишите, сколько реально ушло из каждой секции. Пустые секции можно оставить пустыми.</div><div id="vpb-events"></div></div>
+     <div class="vpb-card"><div class="vpb-section-title">📝 3. Отметки печатника после палеты</div><div class="vpb-muted">Запишите, сколько реально ушло из каждой секции. Пустые секции можно оставить пустыми.</div><div id="vpb-events"></div></div>
   </section>`;
   document.body.appendChild(modal);
 
-  ['vpb-line', 'vpb-article', 'vpb-gsm', 'vpb-roll-length', 'vpb-roll-width', 'vpb-pallet-meters', 'vpb-speed'].forEach(id => {
-    modal.addEventListener('input', e => {
-      if (e.target && e.target.id === id) { updateStateFromForm(); render(); }
-    });
+  const formIds = ['vpb-line', 'vpb-article', 'vpb-gsm', 'vpb-roll-length', 'vpb-roll-width', 'vpb-pallet-meters', 'vpb-speed'];
+  modal.addEventListener('input', e => {
+    if (e.target && formIds.indexOf(e.target.id) >= 0) updateStateFromForm();
+  });
+  modal.addEventListener('change', e => {
+    if (e.target && (formIds.indexOf(e.target.id) >= 0 || /^vpb-(current|rate)-\d+$/.test(e.target.id))) {
+      updateStateFromForm();
+      render();
+    }
   });
   tickTimer = setInterval(tick, 1000);
+  setInterval(syncRunLock, 4500);
+  window.addEventListener('storage', e => {
+    if (e.key === RUN_LOCKS_KEY) render();
+  });
   window.addEventListener('beforeunload', () => { tick(); save(); saveEvents(); });
   render();
 })();
@@ -30699,11 +30999,12 @@ if (location.protocol === 'file:') {
     const avg = lineMeasured.length ? lineMeasured.reduce((s, x) => s + x.kgPer1000m, 0) / lineMeasured.length : 0;
     const progressLabel = ($('vpb-progress-label') || {}).textContent || '';
     const match = progressLabel.match(/([0-9]+(?:[.,][0-9]+)?)%.*?([0-9]+)\s*$/);
-    return {
+     return {
       line, article: (($('vpb-article') || {}).value || '').trim(),
       paintType: water ? 'water' : 'standard',
       speed: round(num($('vpb-speed') && $('vpb-speed').value), 2),
       running: (($('vpb-start') || {}).textContent || '').indexOf('Пауза') >= 0,
+       runLock: typeof window.vpbGetRunLock === 'function' ? window.vpbGetRunLock() : null,
       progress: match ? num(match[1]) : 0,
       completedPallets: match ? num(match[2]) : 0,
       buckets, pendingPallets: pending,
@@ -30734,7 +31035,17 @@ if (location.protocol === 'file:') {
       await pushCloudSnapshotWithRetry(remote => {
         const all = remote.virtualPaintLines && typeof remote.virtualPaintLines === 'object' ? remote.virtualPaintLines : {};
         const old = all[snapshot.line];
-        if (!old || Number(old.updatedAt || 0) <= snapshot.updatedAt) all[snapshot.line] = snapshot;
+         const oldLock = old && old.runLock;
+         const newLock = snapshot.runLock;
+         const oldBusy = !!(
+           (oldLock && Number(oldLock.leaseUntil || 0) > Date.now()) ||
+           (!oldLock && old && old.running === true && Date.now() - Number(old.updatedAt || 0) < 36000)
+         );
+         const newBusy = !!(newLock && Number(newLock.leaseUntil || 0) > Date.now());
+         /* Устройство, которое просто открыло панель, не должно затереть
+            активный запуск начальника смены своим running=false. */
+         if (oldBusy && (!newBusy || oldLock.owner !== newLock.owner)) return CLOUD_PUSH_SKIP;
+         if (!old || Number(old.updatedAt || 0) <= snapshot.updatedAt) all[snapshot.line] = snapshot;
         remote.virtualPaintLines = all;
         return snapshot.updatedAt;
       }, remote => !!(remote.virtualPaintLines && remote.virtualPaintLines[snapshot.line] && Number(remote.virtualPaintLines[snapshot.line].updatedAt || 0) >= snapshot.updatedAt), 2);
