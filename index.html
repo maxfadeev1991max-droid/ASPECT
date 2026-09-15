@@ -30548,8 +30548,19 @@ if (location.protocol === 'file:') {
        return;
      }
      lockBusy = true; alertText = ''; render();
-     const claimed = await claimRunLock();
-     lockBusy = false;
+     let claimed = false;
+     try {
+       claimed = await claimRunLock();
+     } catch (error) {
+       console.warn('[paint-lock] start check failed:', error);
+       alertText = 'Не удалось проверить общую базу. Запуск отменён, чтобы не получилось двойного списания.';
+     } finally {
+       /* claimRunLock() мог вызвать render() ещё до завершения проверки.
+          Обязательно перерисовываем после сброса флага, иначе интерфейс
+          навсегда оставался на «Проверяем…» даже после ответа «линия занята». */
+       lockBusy = false;
+       render();
+     }
      if (!claimed) return;
      if (window.Notification && Notification.permission === 'default') {
        try { Notification.requestPermission(); } catch (_) {}
@@ -30618,7 +30629,7 @@ if (location.protocol === 'file:') {
 
   const style = document.createElement('style');
   style.textContent = `
-    #vpb-fab{position:fixed;right:16px;bottom:76px;z-index:10020;border:0;border-radius:999px;background:#0f766e;color:#fff;font-weight:900;font-size:12px;padding:13px 16px;box-shadow:0 8px 24px #0f172a44;cursor:pointer}
+    #vpb-fab{position:fixed;right:16px;bottom:calc(124px + env(safe-area-inset-bottom));z-index:10020;border:0;border-radius:999px;background:#0f766e;color:#fff;font-weight:900;font-size:12px;padding:13px 16px;box-shadow:0 8px 24px #0f172a44;cursor:pointer}
     #vpb-modal{position:fixed;inset:0;z-index:10010;background:#0f172a99;display:flex;align-items:flex-end;justify-content:center;padding:10px}
     #vpb-modal.vpb-hidden,.vpb-hidden{display:none!important}
     #vpb-sheet{width:min(760px,100%);max-height:94vh;overflow:auto;background:#f8fafc;border-radius:24px;padding:16px;color:#0f172a;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;box-shadow:0 20px 60px #0006}
@@ -30634,7 +30645,7 @@ if (location.protocol === 'file:') {
     .vpb-status{font-size:11px;font-weight:900;color:#0f766e;display:flex;align-items:center;gap:6px}.vpb-dot{width:8px;height:8px;border-radius:50%;background:#10b981;display:inline-block;animation:vpbPulse 1s infinite}@keyframes vpbPulse{50%{opacity:.25}}
     .vpb-progress{height:10px;background:#e2e8f0;border-radius:99px;overflow:hidden;margin-top:8px}.vpb-progress i{display:block;height:100%;background:linear-gradient(90deg,#14b8a6,#0f766e);border-radius:99px;transition:width .3s}.vpb-progress-label{font-size:10px;color:#64748b;font-weight:800;margin-top:4px}
     .vpb-alert{background:#fef2f2;border:1px solid #fca5a5;color:#b91c1c;border-radius:13px;padding:10px;font-size:11px;font-weight:900;margin-top:10px}.vpb-bucket{border:1px solid #e2e8f0;border-radius:14px;padding:10px;margin-top:8px}.vpb-bucket.vpb-low{border-color:#fca5a5;background:#fffafa}.vpb-bucket-head,.vpb-event-top{display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:11px}.vpb-bar{height:7px;background:#e2e8f0;border-radius:99px;overflow:hidden;margin:7px 0}.vpb-bar i{display:block;height:100%;background:#14b8a6;border-radius:99px}.vpb-low .vpb-bar i{background:#ef4444}.vpb-muted{font-size:10px;color:#64748b;line-height:1.4;margin-top:5px}.vpb-paper{background:#ecfeff;border:1px solid #a5f3fc;color:#155e75;border-radius:12px;padding:9px;font-size:10px;line-height:1.45;margin-top:8px}.vpb-section-title{font-size:11px;font-weight:950;text-transform:uppercase;letter-spacing:.04em;color:#334155}.vpb-event{border:1px solid #e2e8f0;border-radius:14px;padding:10px;margin-top:8px;background:#fff}.vpb-event-pending{border-color:#fca5a5;background:#fff7f7}.vpb-event-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:8px}.vpb-event-field{font-size:9px;color:#64748b;font-weight:900}.vpb-event-field input{margin-top:3px;padding:7px 5px;font-size:10px}.vpb-select{appearance:auto}
-     @media(max-width:560px){#vpb-fab{right:10px;bottom:66px}.vpb-config{grid-template-columns:repeat(2,minmax(0,1fr))}.vpb-event-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}.vpb-event-field input{font-size:9px;padding:7px 3px}.vpb-title{font-size:16px}.vpb-grid{grid-template-columns:1fr}.vpb-actions .vpb-btn{flex:1}}
+     @media(max-width:560px){#vpb-fab{right:10px;bottom:calc(124px + env(safe-area-inset-bottom))}.vpb-config{grid-template-columns:repeat(2,minmax(0,1fr))}.vpb-event-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}.vpb-event-field input{font-size:9px;padding:7px 3px}.vpb-title{font-size:16px}.vpb-grid{grid-template-columns:1fr}.vpb-actions .vpb-btn{flex:1}}
   `;
   document.head.appendChild(style);
 
@@ -31116,13 +31127,13 @@ if (location.protocol === 'file:') {
   window.vpdOpen = open; window.vpdClose = close;
   const style = document.createElement('style');
   style.textContent = `
-    #vpd-fab{position:fixed;right:16px;bottom:132px;z-index:10020;border:0;border-radius:999px;background:#1d4ed8;color:#fff;font-weight:900;font-size:11px;padding:12px 15px;box-shadow:0 8px 24px #0f172a44;cursor:pointer}
+    #vpd-fab{position:fixed;right:16px;bottom:calc(176px + env(safe-area-inset-bottom));z-index:10020;border:0;border-radius:999px;background:#1d4ed8;color:#fff;font-weight:900;font-size:11px;padding:12px 15px;box-shadow:0 8px 24px #0f172a44;cursor:pointer}
     #vpd-modal{position:fixed;inset:0;z-index:10015;background:#0f172a99;display:flex;align-items:flex-end;justify-content:center;padding:10px}
     #vpd-modal.vpd-hidden,.vpd-hidden{display:none!important}
     #vpd-sheet{width:min(980px,100%);max-height:94vh;overflow:auto;background:#f1f5f9;border-radius:24px;padding:16px;color:#0f172a;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;box-shadow:0 20px 60px #0006}
     .vpd-top{display:flex;align-items:center;justify-content:space-between;gap:10px}.vpd-title{font-size:18px;font-weight:950;letter-spacing:-.04em}.vpd-close{border:0;background:#dbeafe;border-radius:12px;padding:8px 11px;font-size:18px;cursor:pointer}
     .vpd-note,.vpd-summary{background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:10px;font-size:10px;line-height:1.4;margin-top:10px}.vpd-summary{font-size:11px}.vpd-red{color:#dc2626}.vpd-line-card{background:#fff;border:1px solid #dbeafe;border-radius:17px;padding:12px;margin-top:10px}.vpd-stale{opacity:.72;border-color:#cbd5e1}.vpd-line-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.vpd-line-head b{font-size:14px}.vpd-line-head span,.vpd-line-head strong{display:block;font-size:9px;color:#64748b;margin-top:3px}.vpd-line-head strong{color:#0f766e;text-align:right}.vpd-stale .vpd-line-head strong{color:#64748b}.vpd-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:10px}.vpd-stats div{background:#f8fafc;border-radius:10px;padding:7px}.vpd-stats b,.vpd-stats span{display:block}.vpd-stats b{font-size:13px}.vpd-stats span{font-size:8px;color:#64748b;margin-top:2px}.vpd-progress{height:7px;background:#e2e8f0;border-radius:99px;overflow:hidden;margin-top:10px}.vpd-progress i{display:block;height:100%;background:#2563eb;border-radius:99px}.vpd-progress-label,.vpd-foot{font-size:9px;color:#64748b;margin-top:4px}.vpd-buckets{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:10px}.vpd-mini{font-size:9px}.vpd-mini div{display:flex;justify-content:space-between;gap:3px}.vpd-mini b{font-size:9px}.vpd-mini>i{display:block;height:6px;background:#14b8a6;border-radius:99px;margin-top:3px}.vpd-mini>i.vpd-mini-low{background:#ef4444}.vpd-empty{text-align:center;color:#64748b;background:#fff;border-radius:14px;padding:22px;font-size:11px;margin-top:10px}
-    @media(max-width:560px){#vpd-fab{right:10px;bottom:124px;padding:10px 12px}.vpd-stats{grid-template-columns:repeat(2,1fr)}.vpd-buckets{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:560px){#vpd-fab{right:10px;bottom:calc(176px + env(safe-area-inset-bottom));padding:10px 12px}.vpd-stats{grid-template-columns:repeat(2,1fr)}.vpd-buckets{grid-template-columns:repeat(2,1fr)}}
   `;
   document.head.appendChild(style);
   const fab = document.createElement('button');
