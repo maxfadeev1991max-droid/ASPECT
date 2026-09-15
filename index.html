@@ -2179,13 +2179,16 @@
     </div>
     </div>
 
-    <!-- ===== AI-прогноз остатка краски по секциям ===== -->
+    <!-- ===== Прогноз остатка краски по секциям =====
+         Единица производства здесь не «условное ведро», а палета:
+         1 палета = 964 м бумаги. Масса — это фактический остаток в ёмкости
+         на данный момент; она не складывается с историческим «уже налили». -->
     <div id="paint-predictor-wrap" class="hidden bg-amber-50 border-2 border-amber-200 rounded-2xl p-4 space-y-3">
       <div class="flex items-center justify-between gap-2">
-        <div class="text-[11px] font-black uppercase text-amber-800">🧠 AI-прогноз расхода краски</div>
+        <div class="text-[11px] font-black uppercase text-amber-800">🧠 Расход краски по палетам</div>
         <span id="paint-predictor-speed" class="text-[9px] font-bold text-amber-700"></span>
       </div>
-      <p class="text-[9px] text-amber-700 leading-relaxed -mt-1">Введите запас по секциям. Приложение дополнит расход историей закрытых заявок и похожих забегов этой линии, покажет уверенность оценки и предупредит, когда краску пора заказывать.</p>
+      <p class="text-[9px] text-amber-700 leading-relaxed -mt-1">Основа расчёта: <b>1 палета = 964 м бумаги</b>. Введите фактический остаток в ёмкости — не складывайте его с тем, что уже наливали. Полное ведро принимаем за 250 кг, рабочий ориентир — около 150 кг; кнопки ниже только быстро подставляют эти значения.</p>
       <div id="paint-predictor-ai-summary" class="bg-white/70 border border-amber-200 rounded-xl p-2.5 text-[9px] text-amber-900 leading-relaxed"></div>
       <div id="paint-predictor-rows" class="space-y-2"></div>
       <div id="paint-predictor-summary" class="text-[9px] text-amber-800 font-bold"></div>
@@ -4688,7 +4691,10 @@ async function fetchCloudSnapshotRaw_() {
     rawMaterials: Array.isArray(data.rawMaterials) ? data.rawMaterials : [],
     plannedMaintenance: Array.isArray(data.plannedMaintenance) ? data.plannedMaintenance : [],
     shiftReports: Array.isArray(data.shiftReports) ? data.shiftReports : [],
-    lineRuns: Array.isArray(data.lineRuns) ? data.lineRuns : [],
+     lineRuns: Array.isArray(data.lineRuns) ? data.lineRuns : [],
+     // Текущий остаток краски по линии/секциям. Храним отдельно от
+     // paintRequests: это оперативное состояние печатника, а не заявка.
+     paintPredictor: (data.paintPredictor && typeof data.paintPredictor === 'object') ? data.paintPredictor : {},
     prelaunchLog: Array.isArray(data.prelaunchLog) ? data.prelaunchLog : [],
     shiftHandovers: Array.isArray(data.shiftHandovers) ? data.shiftHandovers : [],
     resourceCounters: data.resourceCounters || {},
@@ -4965,6 +4971,17 @@ function pinFreshLocalFields(remote) {
     remote.lineRuns = mergeArrayForCloudPush(remoteForMerge, lineRuns);
   }
   if (typeof productionOrders !== 'undefined' && !productionOrdersCloudSyncing) remote.productionOrders = mergeArrayForCloudPush(remote.productionOrders, productionOrders);
+  // Не даём обычной отправке (чат, heartbeat, заявка) затереть новый остаток
+  // краски, который печатник ещё не успел отправить отдельным debounce-синком.
+  if (typeof getLocalPaintPredictorCloudEntry === 'function') {
+    const localPaint = getLocalPaintPredictorCloudEntry();
+    if (localPaint) {
+      const current = remote.paintPredictor && typeof remote.paintPredictor === 'object' ? remote.paintPredictor : {};
+      const old = current[localPaint.key];
+      if (!old || Number(old.updatedAt || 0) <= Number(localPaint.entry.updatedAt || 0)) current[localPaint.key] = localPaint.entry;
+      remote.paintPredictor = current;
+    }
+  }
   if (window.aspectCopilotReadPassports) remote.passports = mergeArrayForCloudPush(remote.passports, window.aspectCopilotReadPassports());
 }
 
@@ -6761,6 +6778,7 @@ async function syncFromSheetDb(isManual) {
       checkOverdueRequests();
       notifyNewPaintRequests();
     }
+    if (typeof applyIncomingPaintPredictor === 'function') applyIncomingPaintPredictor(remote);
   } catch (e) {
     console.error(e);
     setSyncStatus('⚠️ Не удалось обновить из общей базы: ' + (e.message || e));
@@ -7616,6 +7634,7 @@ async function checkPaintAlertOnce() {
   try {
     const remote = await fetchCloudSnapshot();
     if (remote) {
+      if (typeof applyIncomingPaintPredictor === 'function') applyIncomingPaintPredictor(remote);
       applyIncomingPaintAlert(remote.paintAlert || null);
       applyIncomingTestPaintAlerts(remote.testPaintAlerts);
       if (!Array.isArray(remote.testPaintAlerts)) applyIncomingTestPaintAlert(remote.testPaintAlert || null);
@@ -20821,17 +20840,130 @@ function renderPrinterTaskBanner() {
   if (listEl) listEl.innerHTML = open.map(t => shiftTaskCardHtml(t, false)).join('');
 }
 const PAINT_PREDICTOR_KEY = 'paint_predictor_sections_v1';
+const PAINT_PREDICTOR_UPDATED_KEY = 'paint_predictor_sections_updated_v1';
 const PAINT_PREDICTOR_SECTIONS = 8;
-function loadPaintPredictorState() {
-  try { return JSON.parse(localStorage.getItem(PAINT_PREDICTOR_KEY) || '[]'); } catch (e) { return []; }
+// Производственная единица для прогноза. Не смешивать с METERS_PER_ROLL:
+// палета — это 964 м бумаги, а рулон — отдельная единица выработки.
+const PAINT_METERS_PER_PALLET = 964;
+const PAINT_CONTAINER_MAX_KG = 250;
+const PAINT_CONTAINER_WORKING_KG = 150;
+const PAINT_PREDICTOR_SYNC_DEBOUNCE_MS = 1200;
+let paintPredictorSyncTimer = null;
+
+function emptyPaintPredictorRow(section) {
+  return { section, currentKg: '', consumption: '' };
 }
-function savePaintPredictorState(rows) { localStorage.setItem(PAINT_PREDICTOR_KEY, JSON.stringify(rows)); }
+function normalizePaintPredictorRows(rows) {
+  const source = Array.isArray(rows) ? rows : [];
+  const out = [];
+  for (let i = 0; i < PAINT_PREDICTOR_SECTIONS; i++) {
+    const r = source[i] || {};
+    // Миграция старой версии: раньше доступная краска ошибочно собиралась
+    // из двух полей reserve + poured. Один раз переносим их в единый остаток,
+    // чтобы старые введённые данные не пропали.
+    const legacyAvailable = (parseFloat(r.reserve) || 0) + (parseFloat(r.poured) || 0);
+    const currentKg = r.currentKg !== undefined && r.currentKg !== null
+      ? r.currentKg
+      : (legacyAvailable > 0 ? String(Math.round(legacyAvailable * 100) / 100) : '');
+    out.push({
+      section: i + 1,
+      currentKg,
+      consumption: r.consumption == null ? '' : r.consumption
+    });
+  }
+  return out;
+}
+function loadPaintPredictorState() {
+  try {
+    return normalizePaintPredictorRows(JSON.parse(localStorage.getItem(PAINT_PREDICTOR_KEY) || '[]'));
+  } catch (e) {
+    return normalizePaintPredictorRows([]);
+  }
+}
+function paintPredictorLineKey() {
+  const line = normalizeLineKey(getLineForRunPrefix('printer') || (currentUserProfile && currentUserProfile.line) || '');
+  return line || 'unknown';
+}
+function paintPredictorLocalUpdatedAt() {
+  try { return parseInt(localStorage.getItem(PAINT_PREDICTOR_UPDATED_KEY) || '0', 10) || 0; } catch (e) { return 0; }
+}
+function getLocalPaintPredictorCloudEntry() {
+  const line = paintPredictorLineKey();
+  if (line === 'unknown') return null;
+  return {
+    key: line,
+    entry: {
+      line,
+      rows: loadPaintPredictorState(),
+      updatedAt: paintPredictorLocalUpdatedAt(),
+      updatedBy: currentUserProfile && currentUserProfile.name ? currentUserProfile.name : ''
+    }
+  };
+}
+function savePaintPredictorState(rows, syncCloud) {
+  const normalized = normalizePaintPredictorRows(rows);
+  try { localStorage.setItem(PAINT_PREDICTOR_KEY, JSON.stringify(normalized)); } catch (e) {}
+  if (syncCloud) {
+    try { localStorage.setItem(PAINT_PREDICTOR_UPDATED_KEY, String(Date.now())); } catch (e) {}
+    queuePaintPredictorCloudSync();
+  }
+}
+function queuePaintPredictorCloudSync() {
+  if (paintPredictorSyncTimer) clearTimeout(paintPredictorSyncTimer);
+  paintPredictorSyncTimer = setTimeout(async () => {
+    paintPredictorSyncTimer = null;
+    const cfg = sheetDbConfig || loadSheetDbConfig();
+    const localPaint = getLocalPaintPredictorCloudEntry();
+    if (!cfg || !cfg.url || !localPaint) return;
+    try {
+      const localUpdatedAt = Number(localPaint.entry.updatedAt || 0);
+      await pushCloudSnapshotWithRetry(
+        remote => {
+          const all = remote.paintPredictor && typeof remote.paintPredictor === 'object' ? remote.paintPredictor : {};
+          const old = all[localPaint.key];
+          // Более новая запись другого телефона не перетирается старым вводом.
+          if (old && Number(old.updatedAt || 0) > localUpdatedAt) return CLOUD_PUSH_SKIP;
+          all[localPaint.key] = localPaint.entry;
+          remote.paintPredictor = all;
+          return localUpdatedAt;
+        },
+        remote => {
+          const saved = remote.paintPredictor && remote.paintPredictor[localPaint.key];
+          return !!saved && Number(saved.updatedAt || 0) >= localUpdatedAt;
+        }
+      );
+    } catch (e) {
+      console.warn('[paint-predictor] не удалось синхронизировать остаток:', e);
+    }
+  }, PAINT_PREDICTOR_SYNC_DEBOUNCE_MS);
+}
+function applyIncomingPaintPredictor(remote) {
+  const line = paintPredictorLineKey();
+  const incoming = remote && remote.paintPredictor && remote.paintPredictor[line];
+  if (!incoming || !Array.isArray(incoming.rows)) return;
+  const incomingTs = Number(incoming.updatedAt || 0);
+  if (!incomingTs || incomingTs <= paintPredictorLocalUpdatedAt()) return;
+  const rowsEl = document.getElementById('paint-predictor-rows');
+  if (rowsEl && rowsEl.contains(document.activeElement)) return;
+  try {
+    localStorage.setItem(PAINT_PREDICTOR_KEY, JSON.stringify(normalizePaintPredictorRows(incoming.rows)));
+    localStorage.setItem(PAINT_PREDICTOR_UPDATED_KEY, String(incomingTs));
+  } catch (e) {}
+  if (typeof renderPaintPredictor === 'function') renderPaintPredictor();
+}
 function onPaintPredictorInput(index, field, value) {
   const rows = loadPaintPredictorState();
-  while (rows.length < PAINT_PREDICTOR_SECTIONS) rows.push({ section: rows.length + 1, reserve: '', poured: '', consumption: '' });
+  rows[index] = rows[index] || emptyPaintPredictorRow(index + 1);
   rows[index][field] = value;
-  savePaintPredictorState(rows);
+  savePaintPredictorState(rows, true);
   updatePaintPredictorLive();
+}
+function setPaintPredictorPreset(index, kg) {
+  const rows = loadPaintPredictorState();
+  rows[index] = rows[index] || emptyPaintPredictorRow(index + 1);
+  rows[index].currentKg = String(kg);
+  savePaintPredictorState(rows, true);
+  renderPaintPredictor();
 }
 function parsePaintKgValue(raw) {
   const text = String(raw == null ? '' : raw).replace(',', '.').toLowerCase();
@@ -20851,6 +20983,26 @@ function medianPaintPredictor(values) {
   if (!sorted.length) return null;
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+function paintPredictorMetrics(row, speed, modelConsumption) {
+  const currentKg = Math.max(0, parseFloat(row.currentKg) || 0);
+  const manualConsumption = Math.max(0, parseFloat(row.consumption) || 0);
+  const consumption = manualConsumption || modelConsumption || 0;
+  // кг/1000 м → кг на одну палету (964 м).
+  const kgPerPallet = consumption > 0 ? consumption * PAINT_METERS_PER_PALLET / 1000 : 0;
+  const pallets = kgPerPallet > 0 ? currentKg / kgPerPallet : null;
+  const minutes = pallets != null && speed > 0 ? pallets * PAINT_METERS_PER_PALLET / speed : null;
+  return { currentKg, manualConsumption, consumption, kgPerPallet, pallets, minutes };
+}
+function paintPredictorPalletLabel(value) {
+  if (!Number.isFinite(value)) return '—';
+  return value.toFixed(2).replace('.', ',');
+}
+function paintPredictorMinutesLabel(value) {
+  if (!Number.isFinite(value)) return '—';
+  if (value < 60) return Math.round(value) + ' мин';
+  const h = Math.floor(value / 60), m = Math.round(value % 60);
+  return h + ' ч ' + (m ? m + ' мин' : '');
 }
 // История расхода строится только по фактически закрытым заявкам, где
 // указано количество, и по завершённым забегам, где есть метраж. Это
@@ -20911,13 +21063,13 @@ function renderPaintPredictorAIResult(intelligence) {
   const el = document.getElementById('paint-predictor-ai-summary');
   if (!el) return;
   if (!intelligence.baseline) {
-    el.innerHTML = '📚 <b>Модель пока не обучена на этой связке.</b> Заполните расход вручную — после закрытия заявок и забегов приложение начнёт считать вашу фактическую норму. Ничего не подставляем «из воздуха».';
+    el.innerHTML = `📚 <b>Модель пока не обучена на этой связке.</b> Введите расход вручную в кг/1000 м — ниже он автоматически пересчитается в кг на палету (${PAINT_METERS_PER_PALLET} м). После закрытых заявок и забегов приложение начнёт считать фактическую норму.`;
     return;
   }
   const speedNote = intelligence.historicalSpeed && intelligence.speed
     ? ` · текущая скорость ${intelligence.speed} м/мин, история ${intelligence.historicalSpeed} м/мин`
     : '';
-  el.innerHTML = `📚 <b>Оценка модели: ${intelligence.baseline.toFixed(2)} кг/1000 м</b> · уверенность ${paintPredictorConfidenceLabel(intelligence.confidence)} · образцов ${intelligence.samples}${speedNote}
+   el.innerHTML = `📚 <b>Оценка модели: ${intelligence.baseline.toFixed(2)} кг/1000 м</b> · ≈ ${(intelligence.baseline * PAINT_METERS_PER_PALLET / 1000).toFixed(2)} кг/палету · уверенность ${paintPredictorConfidenceLabel(intelligence.confidence)} · образцов ${intelligence.samples}${speedNote}
     <button onclick="applyPaintPredictorBaseline()" class="mt-1.5 w-full bg-amber-600 text-white py-1.5 rounded-lg text-[9px] font-black uppercase">⚡ Применить оценку в пустые секции</button>`;
 }
 function applyPaintPredictorBaseline() {
@@ -20932,7 +21084,7 @@ function applyPaintPredictorBaseline() {
       filled++;
     }
   });
-  savePaintPredictorState(rows);
+  savePaintPredictorState(rows, true);
   renderPaintPredictor();
   toast(filled ? `Оценка применена в ${filled} секц.` : 'Во всех секциях расход уже заполнен вручную.');
 }
@@ -20941,16 +21093,16 @@ function preparePredictivePaintRequest(index) {
   const row = rows[index] || {};
   const active = lineRuns.find(r => normalizeLineKey(r.line) === normalizeLineKey(getLineForRunPrefix('printer') || '') && !r.endTs);
   const intelligence = computePaintPredictorIntelligence();
-  const effectiveConsumption = parseFloat(row.consumption) > 0 ? parseFloat(row.consumption) : intelligence.baseline;
-  const available = (parseFloat(row.reserve) || 0) + (parseFloat(row.poured) || 0);
   const speed = active && Number(active.speedMPerMin) > 0 ? Number(active.speedMPerMin) : 0;
-  const minutes = speed > 0 && effectiveConsumption > 0 ? available / (effectiveConsumption * speed / 1000) : null;
+  const metrics = paintPredictorMetrics(row, speed, intelligence.baseline);
   const articleEl = document.getElementById('paint-request-article');
   const qtyEl = document.getElementById('paint-request-qty');
   const noteEl = document.getElementById('paint-request-note');
   if (articleEl) articleEl.value = active ? active.article : '';
-  if (qtyEl) qtyEl.value = available ? `${available.toFixed(2)} кг` : '';
-  if (noteEl) noteEl.value = `Прогноз по секции ${row.section || index + 1}: краски хватит примерно на ${minutes != null ? Math.round(minutes) : '?'} мин. Запас ${available.toFixed(2)} кг, расход ${effectiveConsumption ? effectiveConsumption.toFixed(2) : '?'} кг/1000 м${intelligence.baseline && !(parseFloat(row.consumption) > 0) ? ' (оценка по истории)' : ''}.`;
+  // Заявка — на одну стандартную полную тару, а не на весь текущий остаток.
+  // Остаток нужен для прогноза, но не должен превращаться в заказ «самому себе».
+  if (qtyEl) qtyEl.value = `${PAINT_CONTAINER_MAX_KG} кг`;
+  if (noteEl) noteEl.value = `Секция ${row.section || index + 1}: остаток ${metrics.currentKg.toFixed(2)} кг, хватит примерно на ${metrics.pallets != null ? paintPredictorPalletLabel(metrics.pallets) : '?'} палеты (${metrics.minutes != null ? paintPredictorMinutesLabel(metrics.minutes) : '?'}). Норма ${metrics.consumption ? metrics.consumption.toFixed(2) : '?'} кг/1000 м = ${metrics.kgPerPallet ? metrics.kgPerPallet.toFixed(2) : '?'} кг/палету${intelligence.baseline && !metrics.manualConsumption ? ' (оценка по истории)' : ''}. Нужно подготовить новую тару ${PAINT_CONTAINER_MAX_KG} кг.`;
   const form = document.getElementById('paint-request-form');
   if (form) form.scrollIntoView({ behavior: 'smooth', block: 'center' });
   toast('Заявка подготовлена — проверьте количество и отправьте колористу.');
@@ -20971,19 +21123,17 @@ function updatePaintPredictorLive() {
   const rows = loadPaintPredictorState();
   let urgent = false, calculated = false;
   rows.slice(0, PAINT_PREDICTOR_SECTIONS).forEach((r, i) => {
-    const reserve = parseFloat(r.reserve) || 0, poured = parseFloat(r.poured) || 0, manualConsumption = parseFloat(r.consumption) || 0;
-    const consumption = manualConsumption || modelConsumption || 0;
-    const available = reserve + poured;
-    const minutes = speed > 0 && consumption > 0 ? available / (consumption * speed / 1000) : null;
+    const metrics = paintPredictorMetrics(r, speed, modelConsumption);
+    const minutes = metrics.minutes;
     const minutesEl = document.getElementById('paint-predictor-minutes-' + i);
     const statusEl = document.getElementById('paint-predictor-status-' + i);
     const rowEl = rowsEl.children[i];
-    const alert = minutes != null && minutes <= 40;
+    const alert = minutes != null && (minutes <= 40 || (metrics.pallets != null && metrics.pallets <= 1));
     const warning = minutes != null && minutes > 40 && minutes <= 90;
     if (alert) urgent = true;
     if (minutes != null) calculated = true;
-    if (minutesEl) { minutesEl.textContent = minutes == null ? '—' : `≈ ${Math.round(minutes)} мин`; minutesEl.className = `text-[11px] font-black ${alert ? 'text-red-600' : (warning ? 'text-amber-600' : 'text-emerald-600')}`; }
-    if (statusEl) { statusEl.innerHTML = minutes == null ? '<div class="text-[8px] text-gray-400">Заполните запас и запустите линию для прогноза.</div>' : `<div class="flex items-center justify-between text-[9px] ${alert ? 'text-red-600 font-bold' : (warning ? 'text-amber-700 font-bold' : 'text-gray-500')}"><span>${alert ? '⚠️ Краски менее чем на 40 минут' : (warning ? '⏳ Краски менее чем на 90 минут' : `доступно ${available.toFixed(2)} кг`)} · ${manualConsumption ? 'ручной расход ' + manualConsumption.toFixed(2) : 'оценка модели ' + consumption.toFixed(2)} кг/1000 м</span><button onclick="preparePredictivePaintRequest(${i})" class="bg-blue-600 text-white px-2 py-1 rounded-lg font-black uppercase">📨 Подготовить заявку</button></div>`; }
+    if (minutesEl) { minutesEl.textContent = minutes == null ? '—' : `≈ ${paintPredictorPalletLabel(metrics.pallets)} пал. · ${paintPredictorMinutesLabel(minutes)}`; minutesEl.className = `text-[11px] font-black ${alert ? 'text-red-600' : (warning ? 'text-amber-600' : 'text-emerald-600')}`; }
+    if (statusEl) { statusEl.innerHTML = minutes == null ? '<div class="text-[8px] text-gray-400">Введите остаток и расход, затем запустите линию для времени.</div>' : `<div class="flex items-center justify-between gap-2 text-[9px] ${alert ? 'text-red-600 font-bold' : (warning ? 'text-amber-700 font-bold' : 'text-gray-500')}"><span>${alert ? '⚠️ Осталось мало краски' : (warning ? '⏳ Скоро понадобится пополнение' : `остаток ${metrics.currentKg.toFixed(2)} кг`)} · ${metrics.manualConsumption ? 'ручной расход ' + metrics.consumption.toFixed(2) : 'оценка модели ' + metrics.consumption.toFixed(2)} кг/1000 м · ${metrics.kgPerPallet.toFixed(2)} кг/палету</span><button onclick="preparePredictivePaintRequest(${i})" class="bg-blue-600 text-white px-2 py-1 rounded-lg font-black uppercase shrink-0">📨 Заявка ${PAINT_CONTAINER_MAX_KG} кг</button></div>`; }
     if (rowEl) rowEl.classList.toggle('border-red-300', alert);
     if (rowEl) rowEl.classList.toggle('border-amber-300', warning);
     if (rowEl) rowEl.classList.toggle('border-amber-100', !alert && !warning);
@@ -21006,31 +21156,28 @@ function renderPaintPredictor() {
   const active = line ? lineRuns.find(r => normalizeLineKey(r.line) === normalizeLineKey(line) && !r.endTs) : null;
   const speed = active && active.speedMPerMin > 0 ? active.speedMPerMin : 0;
   const speedEl = document.getElementById('paint-predictor-speed');
-  if (speedEl) speedEl.textContent = speed ? `линия ${line} · ${speed} м/мин · ${active.article}` : 'запустите артикул, чтобы получить прогноз';
+   if (speedEl) speedEl.textContent = speed ? `линия ${line} · ${speed} м/мин · ${PAINT_METERS_PER_PALLET} м/палета · ${active.article}` : 'запустите артикул, чтобы получить прогноз';
   const intelligence = computePaintPredictorIntelligence();
   renderPaintPredictorAIResult(intelligence);
   const rows = loadPaintPredictorState();
-  while (rows.length < PAINT_PREDICTOR_SECTIONS) rows.push({ section: rows.length + 1, reserve: '', poured: '', consumption: '' });
-  savePaintPredictorState(rows);
+   savePaintPredictorState(rows, false);
   const summaries = [];
   rowsEl.innerHTML = rows.map((r, i) => {
-    const reserve = parseFloat(r.reserve) || 0, poured = parseFloat(r.poured) || 0, manualConsumption = parseFloat(r.consumption) || 0;
-    const consumption = manualConsumption || intelligence.baseline || 0;
-    const available = reserve + poured;
-    const minutes = speed > 0 && consumption > 0 ? available / (consumption * speed / 1000) : null;
-    r.minutes = minutes == null ? '' : Math.round(minutes * 10) / 10;
-    if (minutes != null) summaries.push({ i, minutes });
-    const alert = minutes != null && minutes <= 40;
+     const metrics = paintPredictorMetrics(r, speed, intelligence.baseline);
+     const minutes = metrics.minutes;
+     if (minutes != null) summaries.push({ i, minutes, pallets: metrics.pallets });
+     const alert = minutes != null && (minutes <= 40 || (metrics.pallets != null && metrics.pallets <= 1));
     const warning = minutes != null && minutes > 40 && minutes <= 90;
-    const orderPaint = consumption > 0 ? consumption * 10.05 : null;
-    return `<div class="bg-white rounded-xl p-2.5 border ${alert ? 'border-red-300' : (warning ? 'border-amber-300' : 'border-amber-100')} space-y-2">
-      <div class="flex items-center justify-between"><div class="text-[10px] font-black text-gray-700">Секция ${i + 1}</div><div id="paint-predictor-minutes-${i}" class="text-[11px] font-black ${alert ? 'text-red-600' : (warning ? 'text-amber-600' : 'text-emerald-600')}">${minutes == null ? '—' : `≈ ${Math.round(minutes)} мин`}</div></div>
-      <div class="grid grid-cols-3 gap-1.5"><input type="number" min="0" step="0.1" value="${r.reserve || ''}" placeholder="Запас, кг" oninput="onPaintPredictorInput(${i},'reserve',this.value)" onblur="renderPaintPredictor()" class="p-2 bg-gray-50 rounded-lg text-[10px] font-bold outline-none"><input type="number" min="0" step="0.1" value="${r.poured || ''}" placeholder="Уже налили, кг" oninput="onPaintPredictorInput(${i},'poured',this.value)" onblur="renderPaintPredictor()" class="p-2 bg-gray-50 rounded-lg text-[10px] font-bold outline-none"><input type="number" min="0" step="0.01" value="${r.consumption || ''}" placeholder="${intelligence.baseline ? 'Расход / AI ' + intelligence.baseline : 'Расход, кг/1000 м'}" oninput="onPaintPredictorInput(${i},'consumption',this.value)" onblur="renderPaintPredictor()" class="p-2 bg-gray-50 rounded-lg text-[10px] font-bold outline-none"></div>
-      <div id="paint-predictor-status-${i}">${minutes != null ? `<div class="flex items-center justify-between text-[9px] ${alert ? 'text-red-600 font-bold' : (warning ? 'text-amber-700 font-bold' : 'text-gray-500')}"><span>${alert ? '⚠️ Краски менее чем на 40 минут' : (warning ? '⏳ Краски менее чем на 90 минут' : `доступно ${available.toFixed(2)} кг`)} · ${manualConsumption ? 'ручной расход ' + manualConsumption.toFixed(2) : 'оценка модели ' + consumption.toFixed(2)} кг/1000 м</span><button onclick="preparePredictivePaintRequest(${i})" class="bg-blue-600 text-white px-2 py-1 rounded-lg font-black uppercase">📨 Подготовить заявку</button></div>` : '<div class="text-[8px] text-gray-400">Заполните запас и запустите линию для прогноза.</div>'}</div></div>`;
+     const overCapacity = metrics.currentKg > PAINT_CONTAINER_MAX_KG;
+     return `<div class="bg-white rounded-xl p-2.5 border ${alert ? 'border-red-300' : (warning ? 'border-amber-300' : 'border-amber-100')} space-y-2">
+       <div class="flex items-center justify-between gap-2"><div class="text-[10px] font-black text-gray-700">Секция ${i + 1}</div><div id="paint-predictor-minutes-${i}" class="text-[11px] font-black text-right ${alert ? 'text-red-600' : (warning ? 'text-amber-600' : 'text-emerald-600')}">${minutes == null ? '—' : `≈ ${paintPredictorPalletLabel(metrics.pallets)} пал. · ${paintPredictorMinutesLabel(minutes)}`}</div></div>
+       <div class="grid grid-cols-2 gap-1.5"><input type="number" min="0" max="${PAINT_CONTAINER_MAX_KG}" step="0.1" value="${r.currentKg || ''}" placeholder="Остаток сейчас, кг" oninput="onPaintPredictorInput(${i},'currentKg',this.value)" onblur="renderPaintPredictor()" class="p-2 bg-gray-50 rounded-lg text-[10px] font-bold outline-none"><input type="number" min="0" step="0.01" value="${r.consumption || ''}" placeholder="${intelligence.baseline ? 'Расход / AI ' + intelligence.baseline : 'Расход, кг/1000 м'}" oninput="onPaintPredictorInput(${i},'consumption',this.value)" onblur="renderPaintPredictor()" class="p-2 bg-gray-50 rounded-lg text-[10px] font-bold outline-none"></div>
+       <div class="flex items-center gap-1.5"><button onclick="setPaintPredictorPreset(${i},${PAINT_CONTAINER_MAX_KG})" class="px-2 py-1 rounded-lg bg-amber-100 text-amber-800 text-[9px] font-black">250 кг</button><button onclick="setPaintPredictorPreset(${i},${PAINT_CONTAINER_WORKING_KG})" class="px-2 py-1 rounded-lg bg-blue-100 text-blue-800 text-[9px] font-black">≈ 150 кг</button><span class="text-[8px] text-gray-400">${overCapacity ? '⚠️ выше максимума тары' : 'масса фактического остатка'}</span></div>
+       <div id="paint-predictor-status-${i}">${minutes != null ? `<div class="flex items-center justify-between gap-2 text-[9px] ${alert ? 'text-red-600 font-bold' : (warning ? 'text-amber-700 font-bold' : 'text-gray-500')}"><span>${alert ? '⚠️ Осталось мало краски' : (warning ? '⏳ Скоро понадобится пополнение' : `остаток ${metrics.currentKg.toFixed(2)} кг`)} · ${metrics.manualConsumption ? 'ручной расход ' + metrics.consumption.toFixed(2) : 'оценка модели ' + metrics.consumption.toFixed(2)} кг/1000 м · ${metrics.kgPerPallet.toFixed(2)} кг/палету</span><button onclick="preparePredictivePaintRequest(${i})" class="bg-blue-600 text-white px-2 py-1 rounded-lg font-black uppercase shrink-0">📨 Заявка ${PAINT_CONTAINER_MAX_KG} кг</button></div>` : '<div class="text-[8px] text-gray-400">Введите остаток и расход, затем запустите линию для времени.</div>'}</div></div>`;
   }).join('');
   const summaryEl = document.getElementById('paint-predictor-summary');
-  if (summaryEl) summaryEl.textContent = summaries.some(x => x.minutes <= 40) ? '⚠️ Есть секции, где краску лучше заказать заранее.' : (summaries.length ? '✅ По текущим данным срочного пополнения не требуется.' : '');
-  savePaintPredictorState(rows);
+   if (summaryEl) summaryEl.textContent = summaries.some(x => x.minutes <= 40 || x.pallets <= 1) ? '⚠️ Есть секции, где краску лучше заказать заранее.' : (summaries.length ? `✅ Расчёт выполнен по палете ${PAINT_METERS_PER_PALLET} м и текущей скорости линии.` : '');
+   savePaintPredictorState(rows, false);
 }
 // Тикаем раз в секунду, но только пока вкладка «Ст. Печатник» реально
 // открыта — иначе бессмысленно грузим таймерами свёрнутый в фоне экран.
@@ -24084,7 +24231,7 @@ function renderStatsView() {
     // замечание по техкарте, пасте, шаблону, разнотону или результату замеса.
     // Считаем только непустые комментарии, не меняя общие показатели рецептов.
     const commentRecords = all
-      .filter(r => StringString(r.comment || '').trim())
+      .filter(r => String(r.comment || '').trim())
       .sort((a, b) => (b.id || 0) - (a.id || 0));
     const commentByArticle = {};
     commentRecords.forEach(r => {
@@ -24205,7 +24352,7 @@ function renderStatsView() {
           ${commentArticleRows.length > 8 ? `<div class="text-[9px] text-gray-400 mt-2">Показаны 8 из ${commentArticleRows.length} групп по артикулам.</div>` : ''}
           <div class="text-[9px] font-black uppercase tracking-wide text-gray-400 mt-4 mb-1.5">Последние комментарии</div>
           <div class="space-y-2">
-            ${recentCommentRows.map(r => `<div class="rounded-xl bg-gray-50 border border-gray-100 px-3 py-2"><div class="flex items-center justify-between gap-2 mb-1"><span class="text-[9px] font-black text-blue-700 truncate">Арт. ${escapeHtmlProd(String(r.article || '').trim() || 'без артикула')}</span><span class="text-[8px] text-gray-400 shrink-0">${escapeHtmlProd(r.date || '')}</span></div><div class="text-[10px] text-gray-600 leading-relaxed whitespace-pre-wrap">${escapeHtmlProd(StringString(r.comment || '').trim())}</div>${r.master ? `<div class="text-[8px] text-gray-400 mt-1">Мастер: ${escapeHtmlProd(r.master)}</div>` : ''}</div>`).join('')}
+            ${recentCommentRows.map(r => `<div class="rounded-xl bg-gray-50 border border-gray-100 px-3 py-2"><div class="flex items-center justify-between gap-2 mb-1"><span class="text-[9px] font-black text-blue-700 truncate">Арт. ${escapeHtmlProd(String(r.article || '').trim() || 'без артикула')}</span><span class="text-[8px] text-gray-400 shrink-0">${escapeHtmlProd(r.date || '')}</span></div><div class="text-[10px] text-gray-600 leading-relaxed whitespace-pre-wrap">${escapeHtmlProd(String(r.comment || '').trim())}</div>${r.master ? `<div class="text-[8px] text-gray-400 mt-1">Мастер: ${escapeHtmlProd(r.master)}</div>` : ''}</div>`).join('')}
           </div>
           ${commentRecords.length > recentCommentRows.length ? `<div class="text-[9px] text-gray-400 mt-2">Показаны последние ${recentCommentRows.length} комментариев из ${commentRecords.length}.</div>` : ''}
         ` : '<p class="text-gray-400 text-xs">Пока нет комментариев к сохранённым рецептам.</p>'}
@@ -29849,6 +29996,901 @@ if (location.protocol === 'file:') {
     if (typeof toast === 'function') toast(msg);
     else console.warn('[aspect]', msg);
   }, 2800);
+})();
+</script>
+<script>
+/* ===== Виртуальные ёмкости краски и контроль палеты v1 =====
+   Модуль намеренно автономный: он не меняет старый прогноз краски, а
+   добавляет фактический учёт по секциям, типу тары и отметкам печатника. */
+(function () {
+  'use strict';
+
+  const KEY = 'aspect_virtual_paint_buckets_v1';
+  const EVENTS_KEY = 'aspect_virtual_paint_events_v1';
+  const SECTIONS = 8;
+  const STANDARD_CAPACITY = 250;
+  const WATER_CAPACITY = 40;
+  const DEFAULT_PALLET_METERS = 964;
+
+  const $ = id => document.getElementById(id);
+  const num = (value, fallback = 0) => {
+    const n = parseFloat(String(value == null ? '' : value).replace(',', '.'));
+    return Number.isFinite(n) ? n : fallback;
+  };
+  const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+  const now = () => Date.now();
+  const stamp = ts => new Date(ts).toLocaleString('ru-RU', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+  });
+  const round = (n, digits = 2) => Math.round(n * 10 ** digits) / 10 ** digits;
+
+  function newState() {
+    return {
+      line: '',
+      article: '',
+      paintType: 'standard',
+      gsm: 70,
+      rollLength: 10.05,
+      rollWidth: 1.06,
+      palletMeters: DEFAULT_PALLET_METERS,
+      speed: 0,
+      running: false,
+      lastTickAt: null,
+      palletProgress: 0,
+      completedPallets: 0,
+      pendingPallet: false,
+      pendingPalletNumber: 0,
+      buckets: Array.from({ length: SECTIONS }, (_, i) => ({
+        section: i + 1, currentKg: '', rateKgPer1000: '', capacityKg: STANDARD_CAPACITY
+      }))
+    };
+  }
+  function normalizeState(raw) {
+    const base = newState();
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const state = Object.assign(base, source);
+    state.paintType = state.paintType === 'water' ? 'water' : 'standard';
+    state.buckets = Array.from({ length: SECTIONS }, (_, i) => {
+      const old = Array.isArray(source.buckets) ? (source.buckets[i] || {}) : {};
+      return {
+        section: i + 1,
+        currentKg: old.currentKg == null ? '' : old.currentKg,
+        rateKgPer1000: old.rateKgPer1000 == null ? '' : old.rateKgPer1000,
+        capacityKg: state.paintType === 'water' ? WATER_CAPACITY : STANDARD_CAPACITY
+      };
+    });
+    state.gsm = num(state.gsm, 70);
+    state.rollLength = num(state.rollLength, 10.05);
+    state.rollWidth = num(state.rollWidth, 1.06);
+    state.palletMeters = Math.max(1, num(state.palletMeters, DEFAULT_PALLET_METERS));
+    state.speed = Math.max(0, num(state.speed, 0));
+    state.palletProgress = Math.max(0, num(state.palletProgress, 0));
+    state.completedPallets = Math.max(0, Math.floor(num(state.completedPallets, 0)));
+    return state;
+  }
+  function load() {
+    try { return normalizeState(JSON.parse(localStorage.getItem(KEY) || 'null')); }
+    catch (_) { return newState(); }
+  }
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (_) {}
+  }
+  function loadEvents() {
+    try {
+      const list = JSON.parse(localStorage.getItem(EVENTS_KEY) || '[]');
+      return Array.isArray(list) ? list.slice(0, 40) : [];
+    } catch (_) { return []; }
+  }
+  function saveEvents() {
+    try { localStorage.setItem(EVENTS_KEY, JSON.stringify(events.slice(0, 40))); } catch (_) {}
+  }
+
+  let state = load();
+  let events = loadEvents();
+  let tickTimer = null;
+  let alertText = '';
+
+  function capacity() {
+    return state.paintType === 'water' ? WATER_CAPACITY : STANDARD_CAPACITY;
+  }
+  function paperMetrics() {
+    const rollKg = state.gsm * state.rollLength * state.rollWidth / 1000;
+    const rolls = state.palletMeters / state.rollLength;
+    return {
+      rollKg,
+      rolls,
+      palletPaperKg: rollKg * rolls,
+      area: state.palletMeters * state.rollWidth
+    };
+  }
+  function getLine() {
+    if (state.line) return state.line;
+    try {
+      if (typeof getLineForRunPrefix === 'function') return getLineForRunPrefix('printer') || '';
+    } catch (_) {}
+    return (window.currentUserProfile && window.currentUserProfile.line) || '';
+  }
+  function syncInput(id, value) {
+    const el = $(id);
+    if (el && document.activeElement !== el) el.value = value == null ? '' : value;
+  }
+  function updateStateFromForm() {
+    state.line = ($('vpb-line') && $('vpb-line').value || '').trim();
+    state.article = ($('vpb-article') && $('vpb-article').value || '').trim();
+    state.paintType = $('vpb-paint-type') ? $('vpb-paint-type').value : state.paintType;
+    state.gsm = Math.max(1, num($('vpb-gsm') && $('vpb-gsm').value, 70));
+    state.rollLength = Math.max(0.1, num($('vpb-roll-length') && $('vpb-roll-length').value, 10.05));
+    state.rollWidth = Math.max(0.1, num($('vpb-roll-width') && $('vpb-roll-width').value, 1.06));
+    state.palletMeters = Math.max(1, num($('vpb-pallet-meters') && $('vpb-pallet-meters').value, 964));
+    state.speed = Math.max(0, num($('vpb-speed') && $('vpb-speed').value, 0));
+    state.buckets.forEach((bucket, i) => {
+      const current = $('vpb-current-' + i);
+      const rate = $('vpb-rate-' + i);
+      if (current && document.activeElement === current) bucket.currentKg = current.value;
+      if (rate && document.activeElement === rate) bucket.rateKgPer1000 = rate.value;
+      bucket.capacityKg = capacity();
+    });
+    save();
+  }
+  function input(id, value, attrs) {
+    return `<input id="${id}" value="${esc(value)}" ${attrs || ''} class="vpb-input">`;
+  }
+  function render() {
+    const root = $('vpb-root');
+    if (!root) return;
+    const m = paperMetrics();
+    const totalRemaining = state.buckets.reduce((sum, b) => sum + Math.max(0, num(b.currentKg)), 0);
+    const progress = Math.min(100, state.palletProgress / state.palletMeters * 100);
+    const pending = events.filter(e => e.pending);
+    syncInput('vpb-line', state.line || getLine());
+    syncInput('vpb-article', state.article);
+    syncInput('vpb-gsm', state.gsm);
+    syncInput('vpb-roll-length', state.rollLength);
+    syncInput('vpb-roll-width', state.rollWidth);
+    syncInput('vpb-pallet-meters', state.palletMeters);
+    syncInput('vpb-speed', state.speed);
+    if ($('vpb-paint-type')) $('vpb-paint-type').value = state.paintType;
+
+    $('vpb-status').innerHTML = state.running
+      ? `<span class="vpb-dot"></span> Идёт расчёт · ${round(state.palletProgress, 1)} / ${round(state.palletMeters, 1)} м`
+      : '⏸ Расчёт остановлен — нажмите «Запустить»';
+    $('vpb-progress').style.width = progress + '%';
+    $('vpb-progress-label').textContent = `${round(progress, 1)}% · палет готово: ${state.completedPallets}`;
+    $('vpb-total').textContent = `${round(totalRemaining, 2)} кг`;
+    $('vpb-paper-calc').innerHTML =
+      `1 рулон: <b>${round(m.rollKg, 3)} кг</b> бумаги · ` +
+      `на палету: <b>${round(m.rolls, 1)} рул.</b> / <b>${round(m.palletPaperKg, 2)} кг</b> · ` +
+      `${round(m.area, 1)} м²`;
+    $('vpb-alert').classList.toggle('vpb-hidden', !alertText && !pending.length);
+    $('vpb-alert').innerHTML = alertText || (pending.length
+      ? `🔔 Палета №${pending[0].pallet} готова — внесите фактический расход по секциям.`
+      : '');
+    $('vpb-start').textContent = state.running ? '⏸ Пауза' : '▶ Запустить';
+    $('vpb-start').className = 'vpb-btn ' + (state.running ? 'vpb-btn-pause' : 'vpb-btn-primary');
+
+    $('vpb-buckets').innerHTML = state.buckets.map((b, i) => {
+      const current = Math.max(0, num(b.currentKg));
+      const cap = b.capacityKg || capacity();
+      const rate = Math.max(0, num(b.rateKgPer1000));
+      const hours = state.speed > 0 && rate > 0 ? current / rate * 1000 / state.speed / 60 : null;
+      const pct = Math.max(0, Math.min(100, current / cap * 100));
+      const low = current <= Math.max(rate * state.palletMeters / 1000, cap * 0.15);
+      return `<div class="vpb-bucket ${low ? 'vpb-low' : ''}">
+        <div class="vpb-bucket-head"><b>Секция ${i + 1}</b><span>${round(current, 2)} / ${cap} кг ${low ? '⚠️' : '✅'}</span></div>
+        <div class="vpb-bar"><i style="width:${pct}%"></i></div>
+        <div class="vpb-grid">
+          ${input('vpb-current-' + i, b.currentKg, `type="number" min="0" step="0.1" max="${cap}" placeholder="Остаток, кг" oninput="window.vpbChange(${i},'currentKg',this.value)"`)}
+          ${input('vpb-rate-' + i, b.rateKgPer1000, 'type="number" min="0" step="0.01" placeholder="Расход, кг/1000 м" oninput="window.vpbChange(' + i + ',\'rateKgPer1000\',this.value)"')}
+        </div>
+        <div class="vpb-muted">${hours == null ? 'Введите расход и скорость для прогноза' : `Остатка примерно на ${round(hours, 1)} ч · ${round(rate * state.palletMeters / 1000, 2)} кг/палету`}</div>
+      </div>`;
+    }).join('');
+
+    $('vpb-events').innerHTML = events.length ? events.slice(0, 12).map(eventHtml).join('') :
+      '<div class="vpb-muted">После первой палеты здесь появится журнал фактического расхода.</div>';
+  }
+  function eventHtml(event) {
+    const actual = event.actualKg || {};
+    const estimated = event.estimatedKg || {};
+    const fields = state.buckets.map((b, i) =>
+      `<label class="vpb-event-field">С${i + 1}
+        <input id="vpb-event-${event.id}-${i}" type="number" min="0" step="0.01"
+          value="${event.pending ? esc(actual[i] == null ? '' : actual[i]) : esc(actual[i] == null ? '—' : actual[i])}"
+          placeholder="${round(num(estimated[i]), 2)} кг" ${event.pending ? '' : 'disabled'}></label>`
+    ).join('');
+    return `<div class="vpb-event ${event.pending ? 'vpb-event-pending' : ''}">
+      <div class="vpb-event-top"><b>Палета №${event.pallet}</b><span>${stamp(event.ts)}</span></div>
+      <div class="vpb-muted">${event.line ? esc(event.line) + ' · ' : ''}${esc(event.article || 'без артикула')} · расчёт ${event.auto ? 'автоматический' : 'ручной'}</div>
+      <div class="vpb-event-grid">${fields}</div>
+      ${event.pending
+        ? `<button class="vpb-btn vpb-btn-small vpb-btn-primary" onclick="window.vpbSaveEvent('${event.id}')">✅ Сохранить фактический расход</button>`
+        : `<div class="vpb-muted">Фактически отмечено: ${Object.values(actual).filter(v => v !== '' && v != null).length} секций</div>`}
+    </div>`;
+  }
+  function notifyPallet(pallet) {
+    alertText = `🔔 Палета №${pallet} собрана. Печатнику нужно записать расход краски по секциям.`;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) {
+        const ctx = new Ctx(), osc = ctx.createOscillator(), gain = ctx.createGain();
+        osc.frequency.value = 880; gain.gain.value = 0.06;
+        osc.connect(gain); gain.connect(ctx.destination); osc.start();
+        setTimeout(() => { osc.frequency.value = 660; }, 180);
+        setTimeout(() => { osc.stop(); ctx.close(); }, 360);
+      }
+    } catch (_) {}
+    if (window.Notification && Notification.permission === 'granted') {
+      try { new Notification('AspectRu: готова палета', { body: `Палета №${pallet}. Внесите расход краски.` }); } catch (_) {}
+    }
+    setTimeout(() => { alertText = ''; render(); }, 12000);
+  }
+  function finishPallet(auto) {
+    updateStateFromForm();
+    state.palletProgress = Math.max(0, state.palletProgress - state.palletMeters);
+    state.completedPallets += 1;
+    const pallet = state.completedPallets;
+    const estimatedKg = {};
+    state.buckets.forEach((b, i) => { estimatedKg[i] = round(num(b.rateKgPer1000) * state.palletMeters / 1000, 3); });
+    const event = {
+      id: String(now()) + Math.random().toString(16).slice(2),
+      ts: now(), pallet, line: state.line || getLine(), article: state.article,
+      auto: !!auto, pending: true, estimatedKg, actualKg: {}
+    };
+    events.unshift(event);
+    state.pendingPallet = true;
+    state.pendingPalletNumber = pallet;
+    save(); saveEvents(); notifyPallet(pallet); render();
+  }
+  function tick() {
+    if (!state.running) return;
+    const t = now();
+    if (!state.lastTickAt) state.lastTickAt = t;
+    const deltaMinutes = Math.max(0, Math.min(5, (t - state.lastTickAt) / 60000));
+    const meters = state.speed * deltaMinutes;
+    if (meters > 0) {
+      state.buckets.forEach(b => {
+        const used = num(b.rateKgPer1000) * meters / 1000;
+        if (used > 0) b.currentKg = round(Math.max(0, num(b.currentKg) - used), 3);
+      });
+      state.palletProgress += meters;
+      while (state.palletProgress >= state.palletMeters) finishPallet(true);
+    }
+    state.lastTickAt = t;
+    save(); render();
+  }
+  function startPause() {
+    updateStateFromForm();
+    if (state.running) {
+      tick(); state.running = false; state.lastTickAt = null;
+    } else {
+      if (!(state.speed > 0)) { alertText = 'Введите скорость линии, м/мин — тогда расход будет списываться по времени.'; render(); return; }
+      state.running = true; state.lastTickAt = now();
+      if (window.Notification && Notification.permission === 'default') {
+        try { Notification.requestPermission(); } catch (_) {}
+      }
+    }
+    save(); render();
+  }
+  function change(index, field, value) {
+    state.buckets[index][field] = value;
+    state.buckets[index].capacityKg = capacity();
+    save(); render();
+  }
+  function saveEvent(id) {
+    const event = events.find(e => e.id === id);
+    if (!event) return;
+    const actual = {};
+    state.buckets.forEach((_, i) => {
+      const el = $('vpb-event-' + id + '-' + i);
+      actual[i] = el ? el.value : '';
+    });
+    event.actualKg = actual; event.pending = false; event.savedAt = now();
+    const supplied = Object.entries(actual).filter(([, value]) => num(value) > 0);
+    supplied.forEach(([index, value]) => {
+      const kg = num(value);
+      if (kg > 0 && state.palletMeters > 0) {
+        const old = num(state.buckets[index].rateKgPer1000);
+        const learned = kg * 1000 / state.palletMeters;
+        state.buckets[index].rateKgPer1000 = String(round(old ? old * 0.4 + learned * 0.6 : learned, 3));
+      }
+    });
+    state.pendingPallet = events.some(e => e.pending);
+    save(); saveEvents(); alertText = 'Фактический расход сохранён. Норма секции обновлена по последней отметке.'; render();
+  }
+  function resetShift() {
+    if (!window.confirm('Сбросить прогресс палеты и счётчик готовых палет? Остатки и журнал расхода сохранятся.')) return;
+    state.palletProgress = 0; state.completedPallets = 0; state.running = false; state.lastTickAt = null;
+    save(); render();
+  }
+  function setType() {
+    state.paintType = $('vpb-paint-type').value;
+    state.buckets.forEach(b => b.capacityKg = capacity());
+    save(); render();
+  }
+  function addRollPreset(value) {
+    state.rollLength = value; save(); render();
+  }
+  function open() {
+    $('vpb-modal').classList.remove('vpb-hidden');
+    render();
+  }
+  function close() { $('vpb-modal').classList.add('vpb-hidden'); }
+  window.vpbChange = change;
+  window.vpbSaveEvent = saveEvent;
+  window.vpbStartPause = startPause;
+  window.vpbFinishPallet = () => finishPallet(false);
+  window.vpbReset = resetShift;
+  window.vpbSetType = setType;
+  window.vpbAddRollPreset = addRollPreset;
+  window.vpbOpen = open;
+  window.vpbClose = close;
+
+  const style = document.createElement('style');
+  style.textContent = `
+    #vpb-fab{position:fixed;right:16px;bottom:76px;z-index:10020;border:0;border-radius:999px;background:#0f766e;color:#fff;font-weight:900;font-size:12px;padding:13px 16px;box-shadow:0 8px 24px #0f172a44;cursor:pointer}
+    #vpb-modal{position:fixed;inset:0;z-index:10010;background:#0f172a99;display:flex;align-items:flex-end;justify-content:center;padding:10px}
+    #vpb-modal.vpb-hidden,.vpb-hidden{display:none!important}
+    #vpb-sheet{width:min(760px,100%);max-height:94vh;overflow:auto;background:#f8fafc;border-radius:24px;padding:16px;color:#0f172a;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;box-shadow:0 20px 60px #0006}
+    .vpb-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+    .vpb-title{font-size:18px;font-weight:950;letter-spacing:-.04em}.vpb-close{border:0;background:#e2e8f0;border-radius:12px;padding:8px 11px;font-size:18px;cursor:pointer}
+    .vpb-card{background:#fff;border:1px solid #e2e8f0;border-radius:17px;padding:12px;margin-top:10px}
+    .vpb-label{display:block;font-size:10px;font-weight:900;text-transform:uppercase;color:#64748b;margin-bottom:4px}
+    .vpb-input{width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:9px 10px;font-size:12px;font-weight:750;outline:none}
+    .vpb-input:focus{border-color:#14b8a6;box-shadow:0 0 0 3px #14b8a622}
+    .vpb-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.vpb-config{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+    .vpb-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.vpb-btn{border:0;border-radius:11px;padding:10px 12px;font-size:11px;font-weight:950;cursor:pointer}.vpb-btn-primary{background:#0f766e;color:#fff}.vpb-btn-pause{background:#f59e0b;color:#fff}.vpb-btn-muted{background:#e2e8f0;color:#334155}.vpb-btn-danger{background:#fee2e2;color:#991b1b}.vpb-btn-small{padding:8px 10px;margin-top:9px}
+    .vpb-status{font-size:11px;font-weight:900;color:#0f766e;display:flex;align-items:center;gap:6px}.vpb-dot{width:8px;height:8px;border-radius:50%;background:#10b981;display:inline-block;animation:vpbPulse 1s infinite}@keyframes vpbPulse{50%{opacity:.25}}
+    .vpb-progress{height:10px;background:#e2e8f0;border-radius:99px;overflow:hidden;margin-top:8px}.vpb-progress i{display:block;height:100%;background:linear-gradient(90deg,#14b8a6,#0f766e);border-radius:99px;transition:width .3s}.vpb-progress-label{font-size:10px;color:#64748b;font-weight:800;margin-top:4px}
+    .vpb-alert{background:#fef2f2;border:1px solid #fca5a5;color:#b91c1c;border-radius:13px;padding:10px;font-size:11px;font-weight:900;margin-top:10px}.vpb-bucket{border:1px solid #e2e8f0;border-radius:14px;padding:10px;margin-top:8px}.vpb-bucket.vpb-low{border-color:#fca5a5;background:#fffafa}.vpb-bucket-head,.vpb-event-top{display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:11px}.vpb-bar{height:7px;background:#e2e8f0;border-radius:99px;overflow:hidden;margin:7px 0}.vpb-bar i{display:block;height:100%;background:#14b8a6;border-radius:99px}.vpb-low .vpb-bar i{background:#ef4444}.vpb-muted{font-size:10px;color:#64748b;line-height:1.4;margin-top:5px}.vpb-paper{background:#ecfeff;border:1px solid #a5f3fc;color:#155e75;border-radius:12px;padding:9px;font-size:10px;line-height:1.45;margin-top:8px}.vpb-section-title{font-size:11px;font-weight:950;text-transform:uppercase;letter-spacing:.04em;color:#334155}.vpb-event{border:1px solid #e2e8f0;border-radius:14px;padding:10px;margin-top:8px;background:#fff}.vpb-event-pending{border-color:#fca5a5;background:#fff7f7}.vpb-event-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:8px}.vpb-event-field{font-size:9px;color:#64748b;font-weight:900}.vpb-event-field input{margin-top:3px;padding:7px 5px;font-size:10px}.vpb-select{appearance:auto}
+    @media(max-width:560px){#vpb-fab{right:10px;bottom:66px}.vpb-config{grid-template-columns:repeat(2,minmax(0,1fr))}.vpb-event-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}.vpb-event-field input{font-size:9px;padding:7px 3px}.vpb-title{font-size:16px}}
+  `;
+  document.head.appendChild(style);
+
+  const fab = document.createElement('button');
+  fab.id = 'vpb-fab'; fab.type = 'button'; fab.textContent = '🎨 Ёмкости';
+  fab.title = 'Виртуальные ведра и расход краски'; fab.onclick = open; document.body.appendChild(fab);
+  const modal = document.createElement('div');
+  modal.id = 'vpb-modal'; modal.className = 'vpb-hidden';
+  modal.onclick = e => { if (e.target === modal) close(); };
+  modal.innerHTML = `<section id="vpb-sheet" role="dialog" aria-label="Виртуальные ёмкости краски">
+    <div class="vpb-top"><div><div class="vpb-title">🎨 Виртуальные ёмкости краски</div><div class="vpb-muted">Остаток по каждой секции · автоматический расход · отметка палеты</div></div><button class="vpb-close" onclick="window.vpbClose()">×</button></div>
+    <div class="vpb-card">
+      <div class="vpb-config">
+        <label><span class="vpb-label">Линия</span>${input('vpb-line', state.line || getLine(), 'placeholder="№ линии"')}</label>
+        <label><span class="vpb-label">Артикул</span>${input('vpb-article', state.article, 'placeholder="Артикул"')}</label>
+        <label><span class="vpb-label">Краска</span><select id="vpb-paint-type" class="vpb-input vpb-select" onchange="window.vpbSetType()"><option value="standard">Обычная · тара до 250 кг</option><option value="water">Водная · ведро до 40 кг</option></select></label>
+        <label><span class="vpb-label">Скорость, м/мин</span>${input('vpb-speed', state.speed, 'type="number" min="0" step="0.1" placeholder="Напр. 45"')}</label>
+      </div>
+      <div class="vpb-actions"><button id="vpb-start" class="vpb-btn vpb-btn-primary" onclick="window.vpbStartPause()">▶ Запустить</button><button class="vpb-btn vpb-btn-muted" onclick="window.vpbFinishPallet()">✅ Палета готова</button><button class="vpb-btn vpb-btn-danger" onclick="window.vpbReset()">Сбросить прогресс</button></div>
+      <div id="vpb-status" class="vpb-status" style="margin-top:10px">⏸ Расчёт остановлен</div><div class="vpb-progress"><i id="vpb-progress" style="width:0%"></i></div><div id="vpb-progress-label" class="vpb-progress-label">0% · палет готово: 0</div><div id="vpb-alert" class="vpb-alert vpb-hidden"></div>
+    </div>
+    <div class="vpb-card"><div class="vpb-section-title">📐 Бумага и палета</div><div class="vpb-config" style="margin-top:8px">
+      <label><span class="vpb-label">Граммаж, г/м²</span>${input('vpb-gsm', state.gsm, 'type="number" min="1" step="1"')}</label>
+      <label><span class="vpb-label">Длина рулона, м</span>${input('vpb-roll-length', state.rollLength, 'type="number" min="0.1" step="0.01"')}</label>
+      <label><span class="vpb-label">Ширина, м</span>${input('vpb-roll-width', state.rollWidth, 'type="number" min="0.1" step="0.01"')}</label>
+      <label><span class="vpb-label">Палета, метров</span>${input('vpb-pallet-meters', state.palletMeters, 'type="number" min="1" step="1"')}</label>
+    </div><div class="vpb-actions"><button class="vpb-btn vpb-btn-muted" onclick="window.vpbAddRollPreset(10.05)">10,05 м</button><button class="vpb-btn vpb-btn-muted" onclick="window.vpbAddRollPreset(10.20)">10,20 м</button></div><div id="vpb-paper-calc" class="vpb-paper"></div></div>
+    <div class="vpb-card"><div class="vpb-section-title">🪣 Виртуальные ведра · всего осталось <b id="vpb-total">0 кг</b></div><div class="vpb-muted">В поле «расход» укажите норму конкретной секции. Она списывается автоматически по скорости и времени. После фактической отметки палеты норма обновляется.</div><div id="vpb-buckets"></div></div>
+    <div class="vpb-card"><div class="vpb-section-title">📝 Отметки печатника после палеты</div><div class="vpb-muted">Запишите, сколько реально ушло из каждой секции. Пустые секции можно оставить пустыми.</div><div id="vpb-events"></div></div>
+  </section>`;
+  document.body.appendChild(modal);
+
+  ['vpb-line', 'vpb-article', 'vpb-gsm', 'vpb-roll-length', 'vpb-roll-width', 'vpb-pallet-meters', 'vpb-speed'].forEach(id => {
+    modal.addEventListener('input', e => {
+      if (e.target && e.target.id === id) { updateStateFromForm(); render(); }
+    });
+  });
+  tickTimer = setInterval(tick, 1000);
+  window.addEventListener('beforeunload', () => { tick(); save(); saveEvents(); });
+  render();
+})();
+</script>
+<script>
+/* ===== Точные замеры: долив, взвешивание и фактический метраж =====
+   Хранится отдельным ключом, чтобы старый модуль виртуальных ведер не
+   потерял замеры при следующем списании или синхронизации. */
+(function () {
+  'use strict';
+  const EVENTS_KEY = 'aspect_virtual_paint_events_v1';
+  const MEASURE_KEY = 'aspect_paint_measurements_v1';
+  const REFILL_KEY = 'aspect_paint_refills_v1';
+  const $ = id => document.getElementById(id);
+  const num = (v, fallback = 0) => {
+    const n = parseFloat(String(v == null ? '' : v).replace(',', '.'));
+    return Number.isFinite(n) ? n : fallback;
+  };
+  const round = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
+  const stamp = ts => new Date(ts).toLocaleString('ru-RU', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+  });
+  const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+  function read(key) {
+    try {
+      const value = JSON.parse(localStorage.getItem(key) || '[]');
+      return Array.isArray(value) ? value : [];
+    } catch (_) { return []; }
+  }
+  function write(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value.slice(0, 200))); } catch (_) {}
+  }
+  function events() { return read(EVENTS_KEY); }
+  function measurements() { return read(MEASURE_KEY); }
+  function refills() { return read(REFILL_KEY); }
+  function selectedEvent() {
+    const id = $('vpb-measure-event') && $('vpb-measure-event').value;
+    return events().find(e => e.id === id) || events()[0];
+  }
+  function eventLabel(e) {
+    return `Палета №${e.pallet} · ${stamp(e.ts)}${e.article ? ' · ' + e.article : ''}`;
+  }
+  function render() {
+    const box = $('vpb-measure-box');
+    if (!box) return;
+    const list = events();
+    const saved = measurements();
+    const current = selectedEvent();
+    const m = current && saved.find(x => x.eventId === current.id);
+    const measured = saved.filter(x => x.consumptionKg > 0 && x.meters > 0);
+    const avgKg = measured.length ? measured.reduce((s, x) => s + x.consumptionKg, 0) / measured.length : 0;
+    const avgRate = measured.length ? measured.reduce((s, x) => s + x.kgPer1000m, 0) / measured.length : 0;
+    const lastRefills = refills().slice(0, 5);
+    if ($('vpb-measure-event')) {
+      $('vpb-measure-event').innerHTML = list.length
+        ? list.slice(0, 30).map(e => `<option value="${esc(e.id)}">${esc(eventLabel(e))}</option>`).join('')
+        : '<option value="">Сначала завершите палету</option>';
+      if (current) $('vpb-measure-event').value = current.id;
+    }
+    ['vpb-before', 'vpb-refill', 'vpb-after', 'vpb-returned', 'vpb-actual-meters'].forEach((id, i) => {
+      const defaults = m ? [m.beforeKg, m.refillKg, m.afterKg, m.returnedKg, m.meters][i] : (i === 4 ? 964 : '');
+      const el = $(id);
+      if (el && document.activeElement !== el) el.value = defaults == null ? '' : defaults;
+    });
+    const before = num($('vpb-before') && $('vpb-before').value);
+    const refill = num($('vpb-refill') && $('vpb-refill').value);
+    const after = num($('vpb-after') && $('vpb-after').value);
+    const returned = num($('vpb-returned') && $('vpb-returned').value);
+    const meters = num($('vpb-actual-meters') && $('vpb-actual-meters').value);
+    const consumption = before + refill - after - returned;
+    const rate = meters > 0 ? consumption * 1000 / meters : 0;
+    $('vpb-measure-result').innerHTML = consumption > 0
+      ? `Расход по весам: <b>${round(consumption, 3)} кг</b> · <b>${round(rate, 3)} кг/1000 м</b>${consumption < 0 ? ' · ⚠️ проверьте значения' : ''}`
+      : 'Введите вес до, долив и вес после палеты.';
+    $('vpb-measure-summary').innerHTML = measured.length
+      ? `История: ${measured.length} замер(ов) · среднее <b>${round(avgKg, 3)} кг/палету</b> · <b>${round(avgRate, 3)} кг/1000 м</b>`
+      : 'История точных замеров пока пустая.';
+    $('vpb-refill-history').innerHTML = lastRefills.length
+      ? lastRefills.map(r => `<div class="vpb-muted">Секция ${r.section + 1}: <b>+${round(r.kg, 2)} кг</b> · ${stamp(r.ts)}${r.note ? ' · ' + esc(r.note) : ''}</div>`).join('')
+      : '<div class="vpb-muted">Доливы ещё не записаны.</div>';
+  }
+  function saveMeasurement() {
+    const event = selectedEvent();
+    if (!event) { alert('Сначала завершите хотя бы одну палету.'); return; }
+    const before = num($('vpb-before').value);
+    const refill = num($('vpb-refill').value);
+    const after = num($('vpb-after').value);
+    const returned = num($('vpb-returned').value);
+    const meters = num($('vpb-actual-meters').value);
+    const consumption = before + refill - after - returned;
+    if (!(meters > 0) || consumption < 0) {
+      alert('Проверьте фактический метраж и веса: расход не может быть отрицательным.');
+      return;
+    }
+    const list = measurements().filter(x => x.eventId !== event.id);
+    list.unshift({
+      eventId: event.id, pallet: event.pallet, ts: Date.now(),
+      beforeKg: round(before, 3), refillKg: round(refill, 3),
+      afterKg: round(after, 3), returnedKg: round(returned, 3),
+      meters: round(meters, 2), consumptionKg: round(consumption, 3),
+      kgPer1000m: round(consumption * 1000 / meters, 3)
+    });
+    write(MEASURE_KEY, list);
+    const result = $('vpb-measure-result');
+    if (result) result.innerHTML = `✅ Замер палеты №${event.pallet} сохранён: <b>${round(consumption, 3)} кг</b> · <b>${round(consumption * 1000 / meters, 3)} кг/1000 м</b>`;
+    render();
+  }
+  function addRefill() {
+    const section = Math.max(0, Math.min(7, Math.floor(num($('vpb-refill-section').value, 1) - 1)));
+    const kg = num($('vpb-refill-kg').value);
+    const note = ($('vpb-refill-note').value || '').trim();
+    if (!(kg > 0)) { alert('Укажите количество долитой краски.'); return; }
+    const currentEl = $('vpb-current-' + section);
+    const current = num(currentEl && currentEl.value);
+    if (currentEl) currentEl.value = round(current + kg, 3);
+    if (typeof window.vpbChange === 'function') window.vpbChange(section, 'currentKg', String(round(current + kg, 3)));
+    const list = refills();
+    list.unshift({ section, kg: round(kg, 3), note, ts: Date.now() });
+    write(REFILL_KEY, list);
+    $('vpb-refill-kg').value = ''; $('vpb-refill-note').value = '';
+    render();
+  }
+  function inject() {
+    const sheet = $('vpb-sheet');
+    if (!sheet || $('vpb-measure-box')) return;
+    const box = document.createElement('div');
+    box.id = 'vpb-measure-box'; box.className = 'vpb-card';
+    box.innerHTML = `<div class="vpb-section-title">⚖️ Точный замер: долив и взвешивание</div>
+      <div class="vpb-muted">Формула: вес до + долив − вес после − возврат/слив. Это точнее, чем расчёт только по времени.</div>
+      <div class="vpb-grid" style="margin-top:8px">
+        <label><span class="vpb-label">Палета</span><select id="vpb-measure-event" class="vpb-input vpb-select"></select></label>
+        <label><span class="vpb-label">Фактический метраж, м</span><input id="vpb-actual-meters" class="vpb-input" type="number" min="1" step="0.1" value="964"></label>
+        <label><span class="vpb-label">Вес до, кг</span><input id="vpb-before" class="vpb-input" type="number" min="0" step="0.01"></label>
+        <label><span class="vpb-label">Долив, кг</span><input id="vpb-refill" class="vpb-input" type="number" min="0" step="0.01"></label>
+        <label><span class="vpb-label">Вес после, кг</span><input id="vpb-after" class="vpb-input" type="number" min="0" step="0.01"></label>
+        <label><span class="vpb-label">Возврат / слив, кг</span><input id="vpb-returned" class="vpb-input" type="number" min="0" step="0.01" value="0"></label>
+      </div>
+      <div id="vpb-measure-result" class="vpb-paper">Введите вес до, долив и вес после палеты.</div>
+      <div class="vpb-actions"><button class="vpb-btn vpb-btn-primary" onclick="window.vpbSaveMeasurement()">⚖️ Сохранить замер</button></div>
+      <div id="vpb-measure-summary" class="vpb-muted"></div>
+      <div style="border-top:1px solid #e2e8f0;margin-top:12px;padding-top:12px">
+        <div class="vpb-section-title">➕ Записать долив в виртуальное ведро</div>
+        <div class="vpb-grid" style="margin-top:8px">
+          <label><span class="vpb-label">Секция</span><select id="vpb-refill-section" class="vpb-input vpb-select">${Array.from({length:8},(_,i)=>`<option value="${i+1}">Секция ${i+1}</option>`).join('')}</select></label>
+          <label><span class="vpb-label">Долито, кг</span><input id="vpb-refill-kg" class="vpb-input" type="number" min="0" step="0.1" placeholder="Напр. 5"></label>
+          <label style="grid-column:1/-1"><span class="vpb-label">Примечание</span><input id="vpb-refill-note" class="vpb-input" placeholder="Например: новая водная краска"></label>
+        </div>
+        <div class="vpb-actions"><button class="vpb-btn vpb-btn-muted" onclick="window.vpbAddRefill()">➕ Добавить в ведро</button></div>
+        <div id="vpb-refill-history"></div>
+      </div>`;
+    const cards = sheet.querySelectorAll('.vpb-card');
+    const eventsCard = cards[cards.length - 1];
+    sheet.insertBefore(box, eventsCard || null);
+    ['vpb-measure-event','vpb-before','vpb-refill','vpb-after','vpb-returned','vpb-actual-meters'].forEach(id => {
+      box.addEventListener('input', e => { if (e.target && e.target.id === id) render(); });
+    });
+    $('vpb-measure-event').addEventListener('change', render);
+  }
+  window.vpbSaveMeasurement = saveMeasurement;
+  window.vpbAddRefill = addRefill;
+  const style = document.createElement('style');
+  style.textContent = '.vpb-measure-box{}';
+  document.head.appendChild(style);
+  const timer = setInterval(() => { inject(); render(); }, 1000);
+  window.addEventListener('beforeunload', () => clearInterval(timer));
+  inject(); render();
+})();
+</script>
+<script>
+/* ===== Встроенная инструкция к виртуальным ведрам ===== */
+(function () {
+  function injectGuide() {
+    const sheet = document.getElementById('vpb-sheet');
+    if (!sheet || document.getElementById('vpb-guide')) return;
+    const guide = document.createElement('details');
+    guide.id = 'vpb-guide';
+    guide.open = true;
+    guide.className = 'vpb-card vpb-guide';
+    guide.innerHTML = `<summary>📘 Как пользоваться расчётом краски</summary>
+      <div class="vpb-guide-body">
+        <div class="vpb-guide-note"><b>Важно:</b> виртуальное ведро — это не датчик и не весы. Это цифровой учёт: программа списывает примерный расход по времени и скорости, а после взвешивания уточняет реальную норму.</div>
+        <div class="vpb-guide-step"><b>1. Перед запуском линии</b><br>
+          Выберите тип краски, укажите линию и скорость в м/мин. В каждой секции введите текущий остаток в кг и её расход в кг на 1000 м. Если нормы ещё нет — оставьте расход пустым и внесите его после первой фактической палеты.</div>
+        <div class="vpb-guide-step"><b>2. Нажмите «Запустить»</b><br>
+          Пока расчёт запущен, программа каждую минуту списывает краску отдельно по каждой секции. Чем выше скорость и норма секции, тем быстрее уменьшается её виртуальное ведро. Пауза останавливает списание.</div>
+        <div class="vpb-guide-step"><b>3. Когда готова палета</b><br>
+          Если длина палеты достигнута автоматически, появится красный сигнал. Если метраж нужно отметить вручную, нажмите «Палета готова». Затем в блоке отметок внесите фактический расход по секциям.</div>
+        <div class="vpb-guide-step"><b>4. Если краску долили</b><br>
+          Не исправляйте остаток вручную. В блоке «Записать долив» выберите секцию, укажите, сколько кг добавили, и нажмите «Добавить в ведро». Так сохраняется история пополнений.</div>
+        <div class="vpb-guide-step"><b>5. Как получить точный расход</b><br>
+          В блоке «Точный замер» укажите вес до палеты, долив, вес после палеты, возврат/слив и фактический метраж. Программа посчитает: <b>до + долив − после − возврат</b>. Этот результат используется для уточнения нормы.</div>
+        <div class="vpb-guide-example"><b>Пример:</b> в секции было 20 кг, долили 5 кг, после палеты осталось 22 кг, возврата не было. Расход = 20 + 5 − 22 = <b>3 кг</b>. При 964 м это примерно <b>3,11 кг на 1000 м</b>.</div>
+        <div class="vpb-guide-step"><b>Что означают остальные поля</b><br>
+          Граммаж, длина и ширина рулона нужны для расчёта массы бумаги и количества рулонов. Они помогают описать палету, но масса бумаги сама по себе не является расходом краски. Для водной краски режим ограничивает виртуальное ведро значением 40 кг.</div>
+        <div class="vpb-guide-note"><b>Для точности:</b> сначала работайте по прогнозу, а после каждой палеты записывайте реальные веса. Через несколько замеров средняя норма станет близкой к фактической для вашей секции, артикула и скорости.</div>
+      </div>`;
+    const firstCard = sheet.querySelector('.vpb-card');
+    sheet.insertBefore(guide, firstCard || sheet.firstChild);
+  }
+  const style = document.createElement('style');
+  style.textContent = `
+    #vpb-guide{border-color:#99f6e4;background:#f0fdfa}
+    #vpb-guide summary{cursor:pointer;font-size:12px;font-weight:950;color:#115e59;list-style:none}
+    #vpb-guide summary::-webkit-details-marker{display:none}
+    #vpb-guide summary:after{content:'＋';float:right;font-size:15px}
+    #vpb-guide[open] summary:after{content:'−'}
+    .vpb-guide-body{font-size:10px;color:#334155;line-height:1.5;margin-top:10px}
+    .vpb-guide-step{background:#fff;border:1px solid #ccfbf1;border-radius:11px;padding:8px;margin-top:6px}
+    .vpb-guide-note{background:#fefce8;border:1px solid #fde68a;border-radius:11px;padding:8px}
+    .vpb-guide-example{background:#ecfeff;border:1px solid #a5f3fc;border-radius:11px;padding:8px;margin-top:6px;color:#155e75}
+  `;
+  document.head.appendChild(style);
+  injectGuide();
+  setInterval(injectGuide, 1000);
+})();
+</script>
+<script>
+/* ===== Анимация виртуального ведра ===== */
+(function () {
+  function updateBuckets() {
+    const list = document.querySelectorAll('#vpb-buckets .vpb-bucket');
+    if (!list.length) return;
+    const type = document.getElementById('vpb-paint-type');
+    const water = type && type.value === 'water';
+    const running = (document.getElementById('vpb-start') || {}).textContent === '⏸ Пауза';
+    list.forEach((row, index) => {
+      const currentEl = document.getElementById('vpb-current-' + index);
+      const current = Math.max(0, parseFloat(String(currentEl && currentEl.value || '').replace(',', '.')) || 0);
+      const max = water ? 40 : 250;
+      const percent = Math.max(0, Math.min(100, current / max * 100));
+      let visual = row.querySelector('.vpb-visual-bucket');
+      if (!visual) {
+        visual = document.createElement('div');
+        visual.className = 'vpb-visual-line';
+        visual.innerHTML = `<div class="vpb-visual-bucket"><div class="vpb-liquid"><span></span></div><div class="vpb-bucket-mark">0 кг</div></div><div class="vpb-visual-caption">виртуальное ведро</div>`;
+        row.insertBefore(visual, row.firstChild);
+      }
+      visual = row.querySelector('.vpb-visual-bucket');
+      visual.style.setProperty('--vpb-fill', percent + '%');
+      visual.classList.toggle('vpb-water', water);
+      visual.classList.toggle('vpb-running', running);
+      visual.classList.toggle('vpb-visual-low', percent <= 15);
+      const mark = visual.querySelector('.vpb-bucket-mark');
+      if (mark) mark.textContent = `${Math.round(current * 100) / 100} кг`;
+    });
+  }
+  const style = document.createElement('style');
+  style.textContent = `
+    .vpb-visual-line{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+    .vpb-visual-bucket{--vpb-fill:0%;position:relative;width:64px;height:54px;flex:0 0 64px;border:2px solid #94a3b8;border-top:4px solid #64748b;border-radius:7px 7px 12px 12px;overflow:hidden;background:linear-gradient(110deg,#f8fafc,#e2e8f0 55%,#cbd5e1);clip-path:polygon(6% 0,94% 0,87% 100%,13% 100%);box-shadow:inset 5px 0 8px #fff8,2px 3px 5px #0f172a22}
+    .vpb-visual-bucket:before{content:'';position:absolute;z-index:3;left:8px;right:8px;top:5px;height:7px;border:2px solid #64748b;border-radius:50%;opacity:.8}
+    .vpb-liquid{position:absolute;z-index:1;left:-5%;right:-5%;bottom:0;height:var(--vpb-fill);background:linear-gradient(180deg,#2dd4bf,#0f766e);transition:height .5s ease;overflow:hidden}
+    .vpb-liquid:before{content:'';position:absolute;left:-20%;top:-5px;width:140%;height:12px;border-radius:50%;background:#5eead4aa;box-shadow:0 -2px 8px #99f6e455}
+    .vpb-liquid span{position:absolute;top:4px;left:-20%;width:140%;height:2px;background:#ccfbf1aa;transform:rotate(-2deg);animation:vpbWave 2.6s linear infinite}
+    .vpb-water .vpb-liquid{background:linear-gradient(180deg,#60a5fa,#2563eb)}
+    .vpb-water .vpb-liquid:before{background:#bfdbfeaa}
+    .vpb-running .vpb-liquid span{animation-duration:1s}
+    .vpb-visual-low{border-color:#ef4444;box-shadow:0 0 0 3px #fecaca,2px 3px 5px #0f172a22}
+    .vpb-visual-low .vpb-liquid{background:linear-gradient(180deg,#fb7185,#dc2626)}
+    .vpb-bucket-mark{position:absolute;z-index:4;inset:0;display:flex;align-items:center;justify-content:center;color:#0f172a;font-size:10px;font-weight:950;text-shadow:0 1px #fff9}
+    .vpb-visual-caption{font-size:9px;color:#64748b;font-weight:800}
+    @keyframes vpbWave{from{transform:translateX(-12%) rotate(-2deg)}to{transform:translateX(12%) rotate(2deg)}}
+    @media(max-width:560px){.vpb-visual-bucket{width:58px;height:50px;flex-basis:58px}}
+  `;
+  document.head.appendChild(style);
+  updateBuckets();
+  setInterval(updateBuckets, 600);
+})();
+</script>
+<script>
+/* ===== Панель начальника смены: остатки по всем линиям ===== */
+(function () {
+  'use strict';
+  const LOCAL_KEY = 'aspect_paint_line_states_v1';
+  const EVENTS_KEY = 'aspect_virtual_paint_events_v1';
+  const MEASURE_KEY = 'aspect_paint_measurements_v1';
+  const $ = id => document.getElementById(id);
+  const num = v => {
+    const n = parseFloat(String(v == null ? '' : v).replace(',', '.'));
+    return Number.isFinite(n) ? n : 0;
+  };
+  const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+  const round = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
+  const stamp = ts => ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+  function read(key, fallback) {
+    try { const x = JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)); return x; } catch (_) { return fallback; }
+  }
+  function write(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (_) {} }
+  function lineName() {
+    const input = $('vpb-line');
+    if (input && input.value.trim()) return input.value.trim();
+    try { if (typeof getLineForRunPrefix === 'function') return getLineForRunPrefix('printer') || ''; } catch (_) {}
+    return '';
+  }
+  function currentSnapshot() {
+    const line = lineName();
+    if (!line) return null;
+    const water = $('vpb-paint-type') && $('vpb-paint-type').value === 'water';
+    const buckets = Array.from({ length: 8 }, (_, i) => ({
+      section: i + 1,
+      currentKg: round(num($('vpb-current-' + i) && $('vpb-current-' + i).value), 3),
+      rateKgPer1000: round(num($('vpb-rate-' + i) && $('vpb-rate-' + i).value), 3),
+      capacityKg: water ? 40 : 250
+    }));
+    const measured = read(MEASURE_KEY, []).filter(x => x && x.consumptionKg > 0 && x.kgPer1000m > 0);
+    const eventList = read(EVENTS_KEY, []);
+    const eventById = {}; eventList.forEach(e => { eventById[e.id] = e; });
+    const lineMeasured = measured.filter(x => eventById[x.eventId] && eventById[x.eventId].line === line);
+    const pending = eventList.filter(e => e && e.pending && e.line === line).length;
+    const avg = lineMeasured.length ? lineMeasured.reduce((s, x) => s + x.kgPer1000m, 0) / lineMeasured.length : 0;
+    const progressLabel = ($('vpb-progress-label') || {}).textContent || '';
+    const match = progressLabel.match(/([0-9]+(?:[.,][0-9]+)?)%.*?([0-9]+)\s*$/);
+    return {
+      line, article: (($('vpb-article') || {}).value || '').trim(),
+      paintType: water ? 'water' : 'standard',
+      speed: round(num($('vpb-speed') && $('vpb-speed').value), 2),
+      running: (($('vpb-start') || {}).textContent || '').indexOf('Пауза') >= 0,
+      progress: match ? num(match[1]) : 0,
+      completedPallets: match ? num(match[2]) : 0,
+      buckets, pendingPallets: pending,
+      avgKgPer1000m: round(avg, 3), samples: lineMeasured.length,
+      updatedAt: Date.now()
+    };
+  }
+  function captureLocal() {
+    const snapshot = currentSnapshot();
+    if (!snapshot) return null;
+    const all = read(LOCAL_KEY, {});
+    all[snapshot.line] = snapshot;
+    write(LOCAL_KEY, all);
+    return snapshot;
+  }
+  function cloudReady() {
+    try {
+      const cfg = typeof loadSheetDbConfig === 'function' ? (sheetDbConfig || loadSheetDbConfig()) : null;
+      return !!(cfg && cfg.url && typeof fetchCloudSnapshot === 'function' && typeof pushCloudSnapshotWithRetry === 'function');
+    } catch (_) { return false; }
+  }
+  let cloudInFlight = false;
+  async function pushCurrentToCloud() {
+    const snapshot = captureLocal();
+    if (!snapshot || !cloudReady() || cloudInFlight) return;
+    cloudInFlight = true;
+    try {
+      await pushCloudSnapshotWithRetry(remote => {
+        const all = remote.virtualPaintLines && typeof remote.virtualPaintLines === 'object' ? remote.virtualPaintLines : {};
+        const old = all[snapshot.line];
+        if (!old || Number(old.updatedAt || 0) <= snapshot.updatedAt) all[snapshot.line] = snapshot;
+        remote.virtualPaintLines = all;
+        return snapshot.updatedAt;
+      }, remote => !!(remote.virtualPaintLines && remote.virtualPaintLines[snapshot.line] && Number(remote.virtualPaintLines[snapshot.line].updatedAt || 0) >= snapshot.updatedAt), 2);
+    } catch (e) {
+      console.warn('[paint-lines] cloud sync failed', e);
+    } finally { cloudInFlight = false; }
+  }
+  let remoteLines = {};
+  async function loadRemote() {
+    if (!cloudReady()) return;
+    try {
+      const remote = await fetchCloudSnapshot();
+      if (remote && remote.virtualPaintLines && typeof remote.virtualPaintLines === 'object') remoteLines = remote.virtualPaintLines;
+    } catch (e) { console.warn('[paint-lines] cloud read failed', e); }
+  }
+  function mergedLines() {
+    const localLines = read(LOCAL_KEY, {});
+    const all = {};
+    new Set(Object.keys(remoteLines).concat(Object.keys(localLines))).forEach(key => {
+      const remote = remoteLines[key];
+      const local = localLines[key];
+      all[key] = local && (!remote || Number(local.updatedAt || 0) >= Number(remote.updatedAt || 0)) ? local : remote;
+    });
+    return Object.values(all).filter(x => x && x.line);
+  }
+  function lineCard(s) {
+    const age = Date.now() - num(s.updatedAt);
+    const stale = age > 180000;
+    const cap = s.paintType === 'water' ? 40 : 250;
+    const total = (s.buckets || []).reduce((sum, b) => sum + Math.max(0, num(b.currentKg)), 0);
+    const low = (s.buckets || []).filter(b => num(b.currentKg) <= Math.max(num(b.rateKgPer1000) * 0.964, cap * 0.15)).length;
+    const minutes = (s.buckets || []).map(b => s.speed > 0 && num(b.rateKgPer1000) > 0 ? num(b.currentKg) / num(b.rateKgPer1000) * 1000 / s.speed : null).filter(x => x != null && x >= 0);
+    const soon = minutes.length ? Math.min(...minutes) : null;
+    const status = stale ? '⚪ нет свежего сигнала' : (s.running ? '🟢 линия работает' : '⏸ линия остановлена');
+    const bucketHtml = (s.buckets || []).map(b => {
+      const current = Math.max(0, num(b.currentKg)), pct = Math.max(0, Math.min(100, current / cap * 100));
+      const isLow = current <= Math.max(num(b.rateKgPer1000) * 0.964, cap * 0.15);
+      return `<div class="vpd-mini"><div><span>С${b.section}</span><b>${round(current, 2)} кг</b></div><i class="${isLow ? 'vpd-mini-low' : ''}" style="width:${pct}%"></i></div>`;
+    }).join('');
+    return `<article class="vpd-line-card ${stale ? 'vpd-stale' : ''}">
+      <div class="vpd-line-head"><div><b>Линия ${esc(s.line)}</b><span>${esc(s.article || 'артикул не указан')} · ${s.paintType === 'water' ? '💧 водная, 40 кг' : '🎨 обычная, 250 кг'}</span></div><strong>${status}</strong></div>
+      <div class="vpd-stats"><div><b>${round(total, 2)} кг</b><span>остаток всего</span></div><div><b>${s.speed > 0 ? round(s.speed, 1) : '—'}</b><span>м/мин</span></div><div><b>${soon == null ? '—' : round(soon / 60, 1) + ' ч'}</b><span>до малого остатка</span></div><div><b>${s.avgKgPer1000m > 0 ? round(s.avgKgPer1000m, 2) : '—'}</b><span>кг/1000 м факт</span></div></div>
+      <div class="vpd-progress"><i style="width:${Math.max(0, Math.min(100, num(s.progress)))}%"></i></div><div class="vpd-progress-label">Палета: ${round(num(s.progress), 1)}% · готово палет: ${round(num(s.completedPallets), 0)}${s.pendingPallets ? ` · 🔔 отметить: ${s.pendingPallets}` : ''}</div>
+      <div class="vpd-buckets">${bucketHtml}</div>
+      <div class="vpd-foot">${low ? `⚠️ Низкий остаток в секциях: ${low}` : '✅ Критически низких остатков нет'} · замеров: ${s.samples || 0} · обновлено ${stamp(s.updatedAt)}${stale ? ' · проверьте связь или линию' : ''}</div>
+    </article>`;
+  }
+  async function renderDashboard() {
+    const root = $('vpd-lines');
+    if (!root) return;
+    captureLocal();
+    const rows = mergedLines().sort((a, b) => String(a.line).localeCompare(String(b.line), 'ru'));
+    const cloudNote = $('vpd-cloud-note');
+    if (cloudNote) cloudNote.textContent = cloudReady()
+      ? '🟢 Общая база подключена — данные могут приходить с телефонов всех линий.'
+      : '🟡 Общая база не настроена — сейчас видны данные только с этого устройства.';
+    const total = rows.reduce((sum, s) => sum + (s.buckets || []).reduce((x, b) => x + Math.max(0, num(b.currentKg)), 0), 0);
+    const alerts = rows.reduce((sum, s) => sum + (s.buckets || []).filter(b => num(b.currentKg) <= Math.max(num(b.rateKgPer1000) * 0.964, (s.paintType === 'water' ? 40 : 250) * 0.15)).length, 0);
+    $('vpd-summary').innerHTML = `<b>${rows.length}</b> линий · <b>${round(total, 2)} кг</b> краски в виртуальных ведрах · <b class="${alerts ? 'vpd-red' : ''}">${alerts}</b> секций требуют внимания`;
+    root.innerHTML = rows.length ? rows.map(lineCard).join('') : '<div class="vpd-empty">Пока нет данных по линиям. Откройте «🎨 Ёмкости» на каждой линии, укажите номер линии и сохраните остатки.</div>';
+  }
+  function open() {
+    $('vpd-modal').classList.remove('vpd-hidden');
+    renderDashboard();
+    loadRemote().then(renderDashboard);
+  }
+  function close() { $('vpd-modal').classList.add('vpd-hidden'); }
+  window.vpdOpen = open; window.vpdClose = close;
+  const style = document.createElement('style');
+  style.textContent = `
+    #vpd-fab{position:fixed;right:16px;bottom:132px;z-index:10020;border:0;border-radius:999px;background:#1d4ed8;color:#fff;font-weight:900;font-size:11px;padding:12px 15px;box-shadow:0 8px 24px #0f172a44;cursor:pointer}
+    #vpd-modal{position:fixed;inset:0;z-index:10015;background:#0f172a99;display:flex;align-items:flex-end;justify-content:center;padding:10px}
+    #vpd-modal.vpd-hidden,.vpd-hidden{display:none!important}
+    #vpd-sheet{width:min(980px,100%);max-height:94vh;overflow:auto;background:#f1f5f9;border-radius:24px;padding:16px;color:#0f172a;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;box-shadow:0 20px 60px #0006}
+    .vpd-top{display:flex;align-items:center;justify-content:space-between;gap:10px}.vpd-title{font-size:18px;font-weight:950;letter-spacing:-.04em}.vpd-close{border:0;background:#dbeafe;border-radius:12px;padding:8px 11px;font-size:18px;cursor:pointer}
+    .vpd-note,.vpd-summary{background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:10px;font-size:10px;line-height:1.4;margin-top:10px}.vpd-summary{font-size:11px}.vpd-red{color:#dc2626}.vpd-line-card{background:#fff;border:1px solid #dbeafe;border-radius:17px;padding:12px;margin-top:10px}.vpd-stale{opacity:.72;border-color:#cbd5e1}.vpd-line-head{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.vpd-line-head b{font-size:14px}.vpd-line-head span,.vpd-line-head strong{display:block;font-size:9px;color:#64748b;margin-top:3px}.vpd-line-head strong{color:#0f766e;text-align:right}.vpd-stale .vpd-line-head strong{color:#64748b}.vpd-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:10px}.vpd-stats div{background:#f8fafc;border-radius:10px;padding:7px}.vpd-stats b,.vpd-stats span{display:block}.vpd-stats b{font-size:13px}.vpd-stats span{font-size:8px;color:#64748b;margin-top:2px}.vpd-progress{height:7px;background:#e2e8f0;border-radius:99px;overflow:hidden;margin-top:10px}.vpd-progress i{display:block;height:100%;background:#2563eb;border-radius:99px}.vpd-progress-label,.vpd-foot{font-size:9px;color:#64748b;margin-top:4px}.vpd-buckets{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:10px}.vpd-mini{font-size:9px}.vpd-mini div{display:flex;justify-content:space-between;gap:3px}.vpd-mini b{font-size:9px}.vpd-mini>i{display:block;height:6px;background:#14b8a6;border-radius:99px;margin-top:3px}.vpd-mini>i.vpd-mini-low{background:#ef4444}.vpd-empty{text-align:center;color:#64748b;background:#fff;border-radius:14px;padding:22px;font-size:11px;margin-top:10px}
+    @media(max-width:560px){#vpd-fab{right:10px;bottom:124px;padding:10px 12px}.vpd-stats{grid-template-columns:repeat(2,1fr)}.vpd-buckets{grid-template-columns:repeat(2,1fr)}}
+  `;
+  document.head.appendChild(style);
+  const fab = document.createElement('button');
+  fab.id = 'vpd-fab'; fab.type = 'button'; fab.textContent = '📊 Все линии'; fab.title = 'Панель начальника смены'; fab.onclick = open; document.body.appendChild(fab);
+  const modal = document.createElement('div');
+  modal.id = 'vpd-modal'; modal.className = 'vpd-hidden'; modal.onclick = e => { if (e.target === modal) close(); };
+  modal.innerHTML = `<section id="vpd-sheet"><div class="vpd-top"><div><div class="vpd-title">📊 Панель начальника смены</div><div class="vpd-muted">Реальные остатки краски и состояние всех линий</div></div><button class="vpd-close" onclick="window.vpdClose()">×</button></div><div id="vpd-cloud-note" class="vpd-note"></div><div id="vpd-summary" class="vpd-summary"></div><div id="vpd-lines"></div></section>`;
+  document.body.appendChild(modal);
+  let timer = setInterval(async () => {
+    captureLocal();
+    if (!modal.classList.contains('vpd-hidden')) {
+      if (cloudReady()) await loadRemote();
+      renderDashboard();
+    }
+    if (cloudReady()) pushCurrentToCloud();
+  }, 8000);
+  window.addEventListener('beforeunload', () => clearInterval(timer));
+  captureLocal();
+})();
+</script>
+<script>
+/* ===== Права доступа к учёту краски =====
+   printer / senior_printer — работают со своей линией;
+   shift_lead — видит общую панель всех линий. */
+(function () {
+  'use strict';
+  const paintRoles = ['printer', 'senior_printer', 'shift_lead'];
+  function role() {
+    try {
+      if (typeof currentUserProfile !== 'undefined' && currentUserProfile) return currentUserProfile.role || '';
+    } catch (_) {}
+    return '';
+  }
+  function hasRole(list) {
+    const current = role();
+    /* До входа оставляем интерфейс видимым, чтобы экран авторизации не
+       сломал первоначальную загрузку. После входа права применяются сразу. */
+    return !current || list.indexOf(current) >= 0;
+  }
+  function applyPermissions() {
+    const vpbFab = document.getElementById('vpb-fab');
+    const vpbModal = document.getElementById('vpb-modal');
+    const vpdFab = document.getElementById('vpd-fab');
+    const vpdModal = document.getElementById('vpd-modal');
+    const canUsePaint = hasRole(paintRoles);
+    const canSeeAllLines = hasRole(['shift_lead']);
+    if (vpbFab) vpbFab.onclick = window.vpbOpen;
+    if (vpdFab) vpdFab.onclick = window.vpdOpen;
+    if (vpbFab) vpbFab.style.display = canUsePaint ? '' : 'none';
+    if (vpdFab) vpdFab.style.display = canSeeAllLines ? '' : 'none';
+    if (!canUsePaint && vpbModal) vpbModal.classList.add('vpb-hidden');
+    if (!canSeeAllLines && vpdModal) vpdModal.classList.add('vpd-hidden');
+    let badge = document.getElementById('vpb-access-badge');
+    if (!badge) {
+      const title = document.querySelector('#vpb-sheet .vpb-title');
+      if (title) {
+        badge = document.createElement('div');
+        badge.id = 'vpb-access-badge';
+        title.parentNode.appendChild(badge);
+      }
+    }
+    if (badge) badge.textContent = role() === 'shift_lead' ? 'Режим начальника смены · просмотр всех линий' : 'Режим печатника · работа со своей линией';
+  }
+  const oldVpbOpen = window.vpbOpen;
+  const oldVpdOpen = window.vpdOpen;
+  window.vpbOpen = function () {
+    if (!hasRole(paintRoles)) { alert('Учёт краски доступен печатникам, старшим печатникам и начальнику смены.'); return; }
+    if (typeof oldVpbOpen === 'function') oldVpbOpen();
+  };
+  window.vpdOpen = function () {
+    if (!hasRole(['shift_lead'])) { alert('Общая панель всех линий доступна только начальнику смены.'); return; }
+    if (typeof oldVpdOpen === 'function') oldVpdOpen();
+  };
+  const style = document.createElement('style');
+  style.textContent = '#vpb-access-badge{font-size:9px;font-weight:900;color:#64748b;margin-top:3px}';
+  document.head.appendChild(style);
+  const timer = setInterval(applyPermissions, 500);
+  window.addEventListener('beforeunload', () => clearInterval(timer));
+  applyPermissions();
 })();
 </script>
 </body>
