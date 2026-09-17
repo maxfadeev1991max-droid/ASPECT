@@ -31447,6 +31447,7 @@ if (location.protocol === 'file:') {
   function eventLabel(e) {
     return `Палета №${e.pallet} · ${stamp(e.ts)}${e.article ? ' · ' + e.article : ''}`;
   }
+  let vpbLastPopulatedEventId = undefined;
   function render() {
     const box = $('vpb-measure-box');
     if (!box) return;
@@ -31464,11 +31465,19 @@ if (location.protocol === 'file:') {
         : '<option value="">Сначала завершите палету</option>';
       if (current) $('vpb-measure-event').value = current.id;
     }
-    ['vpb-before', 'vpb-refill', 'vpb-after', 'vpb-returned', 'vpb-actual-meters'].forEach((id, i) => {
-      const defaults = m ? [m.beforeKg, m.refillKg, m.afterKg, m.returnedKg, m.meters][i] : (i === 4 ? 964 : '');
-      const el = $(id);
-      if (el && document.activeElement !== el) el.value = defaults == null ? '' : defaults;
-    });
+    // Поля вводятся вручную и не должны перезаписываться каждую секунду —
+    // иначе введённое значение стирается, как только фокус уходит с поля.
+    // Подставляем значения только при смене выбранной палеты (или при первом
+    // открытии), а не на каждый тик таймера.
+    const currentId = current ? current.id : null;
+    if (currentId !== vpbLastPopulatedEventId) {
+      vpbLastPopulatedEventId = currentId;
+      ['vpb-before', 'vpb-refill', 'vpb-after', 'vpb-returned', 'vpb-actual-meters'].forEach((id, i) => {
+        const defaults = m ? [m.beforeKg, m.refillKg, m.afterKg, m.returnedKg, m.meters][i] : (i === 4 ? 964 : '');
+        const el = $(id);
+        if (el) el.value = defaults == null ? '' : defaults;
+      });
+    }
     const before = num($('vpb-before') && $('vpb-before').value);
     const refill = num($('vpb-refill') && $('vpb-refill').value);
     const after = num($('vpb-after') && $('vpb-after').value);
