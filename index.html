@@ -31277,9 +31277,11 @@ if (location.protocol === 'file:') {
     render();
   }
   function resetShift() {
-    if (!window.confirm('Сбросить прогресс палеты и счётчик готовых палет? Остатки и журнал расхода сохранятся.')) return;
+    if (!window.confirm('Сбросить прогресс палеты, счётчик готовых палет, артикул, скорость и остаток краски в ведрах — начать новый артикул с нуля? Журнал расхода и настройки ёмкостей (норма, тип, объём тары) сохранятся.')) return;
      const wasRunning = state.running;
      state.palletProgress = 0; state.completedPallets = 0; state.running = false; state.lastTickAt = null;
+     state.article = ''; state.speed = 0;
+     state.buckets.forEach(b => { b.currentKg = ''; });
      save(); render();
       if (wasRunning && state.runToken) releaseRunLock();
   }
@@ -31367,7 +31369,7 @@ if (location.protocol === 'file:') {
         <label><span class="vpb-label">Тип по умолчанию</span><select id="vpb-paint-type" class="vpb-input vpb-select" onchange="window.vpbSetType()"><option value="plastisol">Пластизольная · тара до 250 кг</option><option value="water">Водная · ведро до 40 кг</option></select></label>
         <label><span class="vpb-label">Скорость, м/мин</span>${input('vpb-speed', state.speed, 'type="number" min="0" step="0.1" placeholder="Напр. 45"')}</label>
       </div>
-       <div class="vpb-actions"><button id="vpb-start" type="button" class="vpb-btn vpb-btn-primary" onclick="window.vpbStartPause()">▶ Запустить</button><button type="button" class="vpb-btn vpb-btn-muted" onclick="window.vpbFinishPallet()">✅ Палета готова</button><button type="button" class="vpb-btn vpb-btn-danger" onclick="window.vpbReset()">Сбросить прогресс</button></div>
+       <div class="vpb-actions"><button id="vpb-start" type="button" class="vpb-btn vpb-btn-primary" onclick="window.vpbStartPause()">▶ Запустить</button><button type="button" class="vpb-btn vpb-btn-muted" onclick="window.vpbFinishPallet()">✅ Палета готова</button><button type="button" class="vpb-btn vpb-btn-danger" onclick="window.vpbReset()">🔄 Сбросить и начать новый артикул</button></div>
         <div class="vpb-quickstart"><b>Как начать:</b> укажите скорость сверху → в каждой секции выберите «Пластизольная» или «Водная», внесите остаток и норму расхода → нажмите «▶ Запустить». Масса готового рулона считается как масса бумаги плюс краска всех секций. Расчёт запускается самостоятельно и не требует нажатия «Линия поехала» — эта кнопка только может подставить линию, артикул и скорость. <b>Ручной расчёт хранится отдельно в этой панели.</b></div>
       <div id="vpb-status" class="vpb-status" style="margin-top:10px">⏸ Расчёт остановлен</div><div class="vpb-progress"><i id="vpb-progress" style="width:0%"></i></div><div id="vpb-progress-label" class="vpb-progress-label">0% · палет готово: 0</div><div id="vpb-alert" class="vpb-alert vpb-hidden"></div><div id="vpb-level-alert" class="vpb-level-alert vpb-hidden"></div>
     </div>
